@@ -1,0 +1,194 @@
+import { useState } from 'react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { useApi, apiGet } from '../lib/api';
+import type { Overview } from '../lib/types';
+import { thb, pct, compact, sevClass } from '../lib/format';
+import { PageHead, Async, Stat } from '../components/ui';
+import HealthScoreGauge from '../components/HealthScoreGauge';
+import WhatIfSimulator from '../components/WhatIfSimulator';
+
+export default function Dashboard() {
+  const state = useApi<Overview>('/analytics/overview');
+
+  return (
+    <>
+      <PageHead title="ภาพรวมการเงิน" desc="รวมทุกกระเป๋าไว้ที่เดียว วิเคราะห์อัตโนมัติด้วย AI + สถิติ" />
+      <Async state={state} height={500}>
+        {(o) => (
+          <div className="grid" style={{ gap: 18 }}>
+            {/* แถวสถิติหลัก */}
+            <div className="grid cols-4">
+              <Stat label="รายรับรวม" value={thb(o.totals.income)} sub={<span className="muted">{o.count} รายการ</span>} />
+              <Stat label="รายจ่ายรวม" value={thb(o.totals.expense)} sub={<span className="muted">ไม่รวมการโอนระหว่างกระเป๋า</span>} />
+              <Stat
+                label="คงเหลือ/ออมสุทธิ"
+                value={<span className={o.totals.net >= 0 ? 'down' : 'up'}>{thb(o.totals.net)}</span>}
+                sub={<span className="muted">ออม {thb(o.totals.savings)}</span>}
+              />
+              <Stat
+                label="อัตราการออม"
+                value={pct(o.totals.savingsRate * 100)}
+                sub={
+                  <span className={sevClass(o.totals.savingsRate >= 0.2 ? 'good' : 'warn') === 'good' ? 'down' : 'up'}>
+                    เป้าหมาย 20%+
+                  </span>
+                }
+              />
+            </div>
+
+            {/* คะแนนสุขภาพ + insight */}
+            <div className="grid cols-2">
+              <HealthScoreGauge health={o.health} />
+              <div className="grid" style={{ gap: 18, alignContent: 'start' }}>
+                <InsightFeed insights={o.insights} />
+                <AdviceCard />
+              </div>
+            </div>
+
+            {/* pipeline stats */}
+            {o.ingestStats && (
+              <div className="card">
+                <h3>ระบบรวม + กันซ้ำอัตโนมัติ</h3>
+                <div className="sub">ผลของ pipeline กลาง: รวมหลายแหล่ง → กันซ้ำข้ามแหล่ง → จับคู่การโอนข้ามกระเป๋า</div>
+                <div className="row wrap" style={{ gap: 10 }}>
+                  <span className="badge info">📥 รับเข้า {o.ingestStats.received} รายการ</span>
+                  <span className="badge good">✅ คงเหลือ {o.ingestStats.added}</span>
+                  <span className="badge warn">🔁 กันซ้ำ {o.ingestStats.duplicatesRemoved}</span>
+                  <span className="badge">↔️ จับคู่โอน {o.transferCount}</span>
+                </div>
+              </div>
+            )}
+
+            {/* รายเดือน + แยกกระเป๋า */}
+            <div className="grid cols-2">
+              <div className="card">
+                <h3>รายรับ–รายจ่าย รายเดือน</h3>
+                <div className="sub">เปรียบเทียบแต่ละเดือน</div>
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={o.monthly} margin={{ left: -10, right: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+                    <YAxis tickFormatter={compact} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+                    <Tooltip
+                      formatter={(v: number) => thb(v)}
+                      contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}
+                    />
+                    <Legend />
+                    <Bar dataKey="income" name="รายรับ" fill="#16a34a" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="expense" name="รายจ่าย" fill="#f97316" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="card">
+                <h3>แยกตามกระเป๋า</h3>
+                <div className="sub">รวมศูนย์ข้ามแอป (KBank · Make · TrueMoney)</div>
+                {o.bySource.map((s) => (
+                  <div key={s.source} className="row between" style={{ padding: '9px 0', borderTop: '1px solid var(--border)' }}>
+                    <div>
+                      <b>{s.label}</b>
+                      <div className="muted" style={{ fontSize: 12 }}>{s.count} รายการ</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div className="down" style={{ fontSize: 13 }}>เข้า {thb(s.income)}</div>
+                      <div className="up" style={{ fontSize: 13 }}>ออก {thb(s.expense)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* หมวดรายจ่าย */}
+            <div className="card">
+              <h3>รายจ่ายตามหมวด</h3>
+              <div className="sub">สัดส่วนการใช้จ่ายแต่ละหมวด</div>
+              {o.byCategory.map((c) => (
+                <div key={c.category} style={{ padding: '7px 0' }}>
+                  <div className="row between" style={{ fontSize: 14 }}>
+                    <span>{c.icon} {c.label}</span>
+                    <span><b>{thb(c.amount)}</b> <span className="muted">· {pct(c.pct)}</span></span>
+                  </div>
+                  <div style={{ height: 7, background: 'var(--surface-2)', borderRadius: 99, marginTop: 4 }}>
+                    <div style={{ width: `${c.pct}%`, height: '100%', background: c.color, borderRadius: 99 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* what-if */}
+            <WhatIfSimulator baseHealth={o.health} />
+          </div>
+        )}
+      </Async>
+    </>
+  );
+}
+
+function InsightFeed({ insights }: { insights: Overview['insights'] }) {
+  return (
+    <div className="card">
+      <h3>ข้อสังเกตอัตโนมัติ</h3>
+      <div className="sub">สรุปจากตัวเลขที่ระบบคำนวณ</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {insights.map((i) => (
+          <div key={i.id} className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+            <span style={{ fontSize: 20 }}>{i.icon}</span>
+            <div>
+              <div className="row" style={{ gap: 6 }}>
+                <b style={{ fontSize: 14 }}>{i.title}</b>
+                <span className={`badge ${sevClass(i.severity)}`} style={{ fontSize: 10 }}>
+                  {i.severity === 'alert' ? 'เตือน' : i.severity === 'warn' ? 'ระวัง' : i.severity === 'good' ? 'ดี' : 'ข้อมูล'}
+                </span>
+              </div>
+              <div className="muted" style={{ fontSize: 13 }}>{i.text}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AdviceCard() {
+  const [advice, setAdvice] = useState<{ text: string; source: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const ask = async () => {
+    setLoading(true);
+    try {
+      setAdvice(await apiGet('/analytics/advice'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="row between">
+        <h3>คำแนะนำจาก AI</h3>
+        <button className="btn primary" onClick={ask} disabled={loading}>
+          {loading ? 'กำลังคิด…' : '✨ ขอคำแนะนำ'}
+        </button>
+      </div>
+      {advice ? (
+        <>
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, marginTop: 10 }}>{advice.text}</div>
+          <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+            ที่มา: {advice.source === 'gemini' ? 'Google Gemini' : 'ระบบ rule-based (ใส่ GEMINI_API_KEY เพื่อใช้ AI จริง)'}
+          </div>
+        </>
+      ) : (
+        <div className="sub" style={{ marginTop: 10 }}>กดเพื่อให้ AI เรียบเรียงคำแนะนำจากคะแนนและข้อสังเกตของคุณ</div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# build output
+dist/
+build/
+client/dev-dist/
+*.tsbuildinfo
+
+# data & secrets
+.env
+.env.local
+server/data/*.db
+server/data/*.db-*
+server/data/tokens.json
+
+# logs
+*.log
+npm-debug.log*
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db
+
+# local-only Claude Code settings (keep launch.json shared)
+.claude/settings.local.json

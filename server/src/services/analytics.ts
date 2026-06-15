@@ -1,0 +1,219 @@
+import type { Granularity, Transaction } from '@finflow/shared';
+import {
+  CATEGORY_META,
+  aggregate,
+  buildSankey,
+  categoryMonthMatrix,
+  categoryTrends,
+  computeHealthScore,
+  dailyExpenseActive,
+  dailySeriesFilled,
+  detectOutliers,
+  detectRecurring,
+  expenseByCategory,
+  forecastNext,
+  generateInsights,
+  isConsumption,
+  isRealIncome,
+  linearRegression,
+  netSavings,
+  round,
+  thaiDayLabel,
+  thaiMonthLabel,
+} from '@finflow/shared';
+
+const SOURCE_LABEL: Record<string, string> = {
+  kbank: 'KBank',
+  make: 'Make by KBank',
+  truemoney: 'TrueMoney',
+  manual: 'บันทึกเอง',
+  slip: 'สลิป',
+};
+
+export function overview(txns: Transaction[], ingestStats?: unknown) {
+  const income = txns.filter(isRealIncome).reduce((a, t) => a + t.amount, 0);
+  const consumption = txns.filter(isConsumption).reduce((a, t) => a + t.amount, 0);
+  const savings = txns
+    .filter((t) => t.direction === 'out' && !t.isTransfer && t.category === 'savings')
+    .reduce((a, t) => a + t.amount, 0);
+
+  // แยกตามกระเป๋า
+  const sourceMap = new Map<string, { income: number; expense: number; count: number }>();
+  for (const t of txns) {
+    const s = sourceMap.get(t.source) ?? { income: 0, expense: 0, count: 0 };
+    s.count++;
+    if (isRealIncome(t)) s.income += t.amount;
+    else if (isConsumption(t)) s.expense += t.amount;
+    sourceMap.set(t.source, s);
+  }
+  const bySource = [...sourceMap.entries()].map(([source, v]) => ({
+    source,
+    label: SOURCE_LABEL[source] ?? source,
+    income: round(v.income),
+    expense: round(v.expense),
+    net: round(v.income - v.expense),
+    count: v.count,
+  }));
+
+  // แยกตามหมวด
+  const cat = expenseByCategory(txns);
+  const byCategory = Object.entries(cat)
+    .map(([id, amount]) => {
+      const meta = CATEGORY_META[id as keyof typeof CATEGORY_META];
+      return {
+        category: id,
+        label: meta?.label ?? id,
+        color: meta?.color ?? '#64748b',
+        icon: meta?.icon ?? '📦',
+        amount: round(amount),
+        pct: round((amount / Math.max(consumption, 1)) * 100, 1),
+      };
+    })
+    .sort((a, b) => b.amount - a.amount);
+
+  // รายเดือน
+  const monthly = aggregate(txns, 'month').map((b) => ({
+    key: b.key,
+    label: thaiMonthLabel(b.key),
+    income: round(b.income),
+    expense: round(b.expense),
+    savings: round(b.savings),
+    net: round(netSavings(b)),
+  }));
+
+  const recurring = detectRecurring(txns);
+  const recurringMonthly = recurring
+    .filter((r) => r.avgIntervalDays >= 25 && r.avgIntervalDays <= 35)
+    .reduce((a, r) => a + r.averageAmount, 0);
+
+  const dates = txns.map((t) => t.date).sort();
+
+  return {
+    totals: {
+      income: round(income),
+      expense: round(consumption),
+      savings: round(savings),
+      net: round(income - consumption),
+      savingsRate: round(income > 0 ? (income - consumption) / income : 0, 4),
+    },
+    bySource,
+    byCategory,
+    monthly,
+    health: computeHealthScore(txns),
+    insights: generateInsights(txns),
+    sankey: buildSankey(txns),
+    recurring: { count: recurring.length, monthlyTotal: round(recurringMonthly), items: recurring },
+    transferCount: txns.filter((t) => t.isTransfer && t.direction === 'out').length,
+    period: { from: dates[0] ?? null, to: dates[dates.length - 1] ?? null },
+    count: txns.length,
+    ingestStats: ingestStats ?? null,
+  };
+}
+
+export function timeline(txns: Transaction[], granularity: Granularity = 'day') {
+  const daily = dailySeriesFilled(txns).map((p) => ({ ...p, label: thaiDayLabel(p.date) }));
+  const months = aggregate(txns, 'month');
+  const monthly = months.map((b) => ({
+    key: b.key,
+    label: thaiMonthLabel(b.key),
+    income: round(b.income),
+    expense: round(b.expense),
+    savings: round(b.savings),
+    net: round(netSavings(b)),
+  }));
+
+  // พยากรณ์เงินออมสุทธิ 3 เดือนข้างหน้าด้วย regression
+  const netSeries = months.map(netSavings);
+  const fit = linearRegression(
+    netSeries.map((_, i) => i),
+    netSeries,
+  );
+  const forecastVals = forecastNext(fit, 3).map((v) => round(v));
+
+  const yearly = aggregate(txns, 'year').map((b) => ({
+    key: b.key,
+    label: `${Number(b.key) + 543}`,
+    income: round(b.income),
+    expense: round(b.expense),
+    savings: round(b.savings),
+    net: round(netSavings(b)),
+  }));
+
+  return {
+    granularity,
+    daily,
+    monthly,
+    yearly,
+    forecast: { netSavings: forecastVals, slope: round(fit.slope), r2: round(fit.r2, 3) },
+  };
+}
+
+export function categories(txns: Transaction[]) {
+  const trends = categoryTrends(txns);
+  const heat = categoryMonthMatrix(txns);
+  return {
+    trends,
+    heatmap: {
+      months: heat.months.map((m) => ({ key: m, label: thaiMonthLabel(m) })),
+      categories: heat.categories.map((c) => ({
+        id: c,
+        label: CATEGORY_META[c]?.label ?? c,
+        color: CATEGORY_META[c]?.color ?? '#64748b',
+        values: heat.months.map((m) => round(heat.matrix[c]?.[m] ?? 0)),
+      })),
+    },
+  };
+}
+
+export function anomalies(txns: Transaction[]) {
+  // รวมรายจ่ายต่อวัน เฉพาะวันที่มีจ่าย
+  const byDay = new Map<string, { expense: number; txns: Transaction[] }>();
+  for (const t of txns) {
+    if (!isConsumption(t)) continue;
+    const d = byDay.get(t.date) ?? { expense: 0, txns: [] };
+    d.expense += t.amount;
+    d.txns.push(t);
+    byDay.set(t.date, d);
+  }
+  const entries = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const values = entries.map((e) => e[1].expense);
+  const dates = entries.map((e) => e[0]);
+  const { outliers, meanValue, sd, upperFence } = detectOutliers(values, {
+    zThreshold: 2,
+    items: dates,
+    highOnly: true,
+    iqrK: 3,
+  });
+
+  // หน้านี้แสดงเฉพาะวันที่ "มีนัยสำคัญเชิงสถิติ" (z>2) เรียงจากมากไปน้อย
+  // เพื่อไม่ให้รก (รายจ่ายรายวันมีการกระจายเบ้ขวาตามธรรมชาติ)
+  const significant = outliers
+    .filter((o) => o.reason !== 'iqr')
+    .sort((a, b) => b.value - a.value);
+
+  return {
+    meanDaily: round(meanValue),
+    sd: round(sd),
+    upperFence: round(upperFence),
+    outliers: significant.map((o) => ({
+      date: o.item as string,
+      label: thaiDayLabel(o.item as string),
+      amount: round(o.value),
+      z: round(o.z, 2),
+      reason: o.reason,
+      transactions: (byDay.get(o.item as string)?.txns ?? [])
+        .sort((a, b) => b.amount - a.amount)
+        .map((t) => ({
+          counterparty: t.counterparty,
+          amount: round(t.amount),
+          category: t.category,
+          categoryLabel: CATEGORY_META[t.category]?.label ?? t.category,
+        })),
+    })),
+  };
+}
+
+/** ชุดข้อมูลรายวัน (สำหรับคำนวณซ้ำที่อื่น) */
+export function dailyExpense(txns: Transaction[]): number[] {
+  return dailyExpenseActive(txns);
+}
