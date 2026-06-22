@@ -150,3 +150,29 @@ describe('taxOverview', () => {
     expect(o.vatPaidEstimate).toBeCloseTo(10700 * (7 / 107), 0); // ≈ 700
   });
 });
+
+describe('tax engine — legal-accuracy guards', () => {
+  it('40(1)+(2) combined expense applies 50% to the sum, under the 100k cap', () => {
+    // 80,000 + 80,000 = 160,000 → 50% = 80,000 (below the 100,000 combined cap)
+    expect(expenseDeduction([inc('40(1)', 80000), inc('40(2)', 80000)], RULES_2567)).toBe(80000);
+  });
+
+  it('caps donation at 10% of income after expense and OTHER allowances', () => {
+    // grossTaxable 500,000; incomeAfterExpense 400,000
+    // other allowances = personal 60,000 + ssf 50,000 = 110,000
+    // donation base = 400,000 − 110,000 = 290,000 → 10% = 29,000 (binds below the 100,000 given)
+    const d = { ...emptyDed, ssf: 50000, donationGeneral: 100000 };
+    const r = computeAllowances(d, 500000, 400000, RULES_2567);
+    const don = r.breakdown.find((x) => x.id === 'donation')!;
+    expect(don.used).toBe(29000);
+  });
+
+  it('keeps Thai ESG separate from the 500k retirement combined cap', () => {
+    // rmf individual cap = min(30%·5M, 500k) = 500k; retirement sum clipped to 500k
+    // thaiEsg = min(30%·5M, 300k) = 300k, NOT reduced by the retirement cap
+    const d = { ...emptyDed, rmf: 500000, thaiEsg: 300000 };
+    const r = computeAllowances(d, 5000000, 4000000, RULES_2567);
+    expect(r.breakdown.find((x) => x.id === 'retirement')!.used).toBe(500000);
+    expect(r.breakdown.find((x) => x.id === 'thaiEsg')!.used).toBe(300000);
+  });
+});
