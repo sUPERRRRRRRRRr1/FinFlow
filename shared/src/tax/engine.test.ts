@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { RULES_2567 } from './rules2567.js';
-import { progressiveTax, marginalRate, expenseDeduction, computeAllowances } from './engine.js';
-import type { IncomeItem, Deductions } from './types.js';
+import { progressiveTax, marginalRate, expenseDeduction, computeAllowances, computeTax, filingInfo, defaultTaxProfile } from './engine.js';
+import type { IncomeItem, Deductions, TaxProfile } from './types.js';
 
 describe('progressiveTax', () => {
   const b = RULES_2567.brackets;
@@ -67,5 +67,56 @@ describe('computeAllowances', () => {
     const r = computeAllowances(d, 400000, 300000, RULES_2567);
     const don = r.breakdown.find((x) => x.id === 'donation')!;
     expect(don.used).toBe(24000);
+  });
+});
+
+const baseProfile = (over: Partial<TaxProfile> = {}): TaxProfile => ({
+  ...defaultTaxProfile(2567),
+  ...over,
+});
+
+describe('computeTax', () => {
+  it('salary 600k, only personal allowance → expected PIT', () => {
+    const p = baseProfile({ income: [{ type: '40(1)', amount: 600000, source: 'user' }] });
+    const r = computeTax(p, RULES_2567);
+    // expense 100k, allowance 60k → net 440,000
+    expect(r.netIncome).toBe(440000);
+    // 5%*150k(7,500) + 10%*140k(14,000) = 21,500
+    expect(r.taxBeforeCredit).toBeCloseTo(21500, 0);
+  });
+
+  it('subtracts WHT credit and reports a refund as negative taxDue', () => {
+    const p = baseProfile({ income: [{ type: '40(1)', amount: 600000, withholding: 30000, source: 'user' }] });
+    const r = computeTax(p, RULES_2567);
+    expect(r.withholdingCredit).toBe(30000);
+    expect(r.taxDue).toBeCloseTo(21500 - 30000, 0); // -8,500 = ขอคืน
+  });
+
+  it('applies the 0.5% minimum-tax method when 40(2)-(8) ≥ 120k and it exceeds the progressive tax', () => {
+    // 40(8) 3,000,000, 60% expense → 1.2m, minus 60k personal = net 1,140,000
+    const p = baseProfile({ income: [{ type: '40(8)', amount: 3000000, source: 'user' }] });
+    const r = computeTax(p, RULES_2567);
+    // min tax = 0.5% * 3,000,000 = 15,000 (> 5,000 floor); progressive on 1.14m is larger → progressive wins
+    expect(r.minimumTax).toBe(15000);
+    expect(r.taxBeforeCredit).toBe(Math.max(r.progressiveTax, r.minimumTax));
+  });
+
+  it('excludes final-tax dividends from the taxable base', () => {
+    const p = baseProfile({
+      dividendMode: 'final',
+      income: [{ type: '40(4)', amount: 100000, withholding: 10000, dividend: true, source: 'user' }],
+    });
+    const r = computeTax(p, RULES_2567);
+    expect(r.grossTaxable).toBe(0);
+    expect(r.withholdingCredit).toBe(0);
+  });
+});
+
+describe('filingInfo', () => {
+  it('flags ภ.ง.ด.91 for salary-only above 120k single', () => {
+    const p = baseProfile({ income: [{ type: '40(1)', amount: 200000, source: 'user' }] });
+    const f = filingInfo(p, computeTax(p, RULES_2567), RULES_2567);
+    expect(f.mustFile).toBe(true);
+    expect(f.form).toBe('ภ.ง.ด.91');
   });
 });

@@ -1,4 +1,4 @@
-import type { Bracket, BracketDetail, IncomeItem, IncomeType, TaxRules, Deductions, AllowanceLine } from './types.js';
+import type { Bracket, BracketDetail, IncomeItem, IncomeType, TaxRules, Deductions, AllowanceLine, TaxProfile, TaxResult, FilingInfo } from './types.js';
 
 /** ภาษีวิธีขั้นบันได: เก็บภาษีเฉพาะส่วนที่อยู่ในแต่ละขั้น */
 export function progressiveTax(netIncome: number, brackets: Bracket[]): { tax: number; brackets: BracketDetail[] } {
@@ -101,4 +101,87 @@ export function expenseDeduction(income: IncomeItem[], rules: TaxRules): number 
     total += deduct;
   }
   return total;
+}
+
+// ─── Task 4: computeTax, filingInfo, defaultTaxProfile ───────────────────────
+
+const EMPTY_DEDUCTIONS: Deductions = {
+  spouse: false, children: 0, childrenSecondChildPlus: 0, parents: 0, disabled: 0, maternity: 0,
+  socialSecurity: 0, lifeInsurance: 0, healthInsurance: 0, parentHealthInsurance: 0, pensionInsurance: 0,
+  providentFund: 0, rmf: 0, ssf: 0, thaiEsg: 0, nsf: 0,
+  homeLoanInterest: 0, donationGeneral: 0, donationEducation: 0, easyEReceipt: 0,
+};
+
+export function defaultTaxProfile(year: number): TaxProfile {
+  return { taxYear: year, married: false, income: [], deductions: { ...EMPTY_DEDUCTIONS }, dividendMode: 'final', annualize: true };
+}
+
+/** เงินได้ที่นำมาคำนวณ (ตัดปันผลที่เลือก final ออก) */
+function taxableIncome(profile: TaxProfile): IncomeItem[] {
+  return profile.income.filter((i) => !(i.dividend && profile.dividendMode === 'final'));
+}
+
+export function computeTax(profile: TaxProfile, rules: TaxRules): TaxResult {
+  const income = taxableIncome(profile);
+  const grossByType = sumByType(income);
+  const grossTaxable = income.reduce((a, i) => a + i.amount, 0);
+
+  const expense = expenseDeduction(income, rules);
+  const incomeAfterExpense = Math.max(0, grossTaxable - expense);
+  const { total: totalAllowances, breakdown } = computeAllowances(
+    profile.deductions,
+    grossTaxable,
+    incomeAfterExpense,
+    rules,
+  );
+
+  const netIncome = Math.max(0, incomeAfterExpense - totalAllowances);
+  const prog = progressiveTax(netIncome, rules.brackets);
+
+  // วิธีภาษีขั้นต่ำ 0.5%: เงินได้พึงประเมิน 40(2)-(8) รวม ≥ threshold
+  const otherIncome = (Object.entries(grossByType) as [IncomeType, number][])
+    .filter(([t]) => t !== '40(1)')
+    .reduce((a, [, v]) => a + v, 0);
+  let minimumTax = 0;
+  if (otherIncome >= rules.minTaxThreshold) {
+    const m = otherIncome * rules.minTaxRate;
+    if (m > rules.minTaxExemptBelow) minimumTax = m;
+  }
+
+  const taxBeforeCredit = Math.max(prog.tax, minimumTax);
+  const withholdingCredit = income.reduce((a, i) => a + (i.withholding ?? 0), 0);
+  const taxDue = taxBeforeCredit - withholdingCredit;
+
+  return {
+    taxYear: profile.taxYear,
+    grossTaxable: Math.round(grossTaxable),
+    grossByType,
+    expenseDeduction: Math.round(expense),
+    totalAllowances: Math.round(totalAllowances),
+    allowanceBreakdown: breakdown,
+    netIncome: Math.round(netIncome),
+    progressiveTax: Math.round(prog.tax),
+    minimumTax: Math.round(minimumTax),
+    taxBeforeCredit: Math.round(taxBeforeCredit),
+    withholdingCredit: Math.round(withholdingCredit),
+    taxDue: Math.round(taxDue),
+    effectiveRate: grossTaxable > 0 ? taxBeforeCredit / grossTaxable : 0,
+    marginalRate: marginalRate(netIncome, rules.brackets),
+    brackets: prog.brackets,
+  };
+}
+
+export function filingInfo(profile: TaxProfile, result: TaxResult, rules: TaxRules): FilingInfo {
+  const hasOther = Object.keys(result.grossByType).some((t) => t !== '40(1)');
+  const threshold = hasOther
+    ? profile.married ? rules.filing.otherMarried : rules.filing.otherSingle
+    : profile.married ? rules.filing.salaryMarried : rules.filing.salarySingle;
+  const fy = profile.taxYear + 1;
+  return {
+    mustFile: result.grossTaxable > threshold,
+    form: hasOther ? 'ภ.ง.ด.90' : 'ภ.ง.ด.91',
+    deadlinePaper: `31 มี.ค. ${fy}`,
+    deadlineOnline: `~8 เม.ย. ${fy}`,
+    refundable: result.taxDue < 0 ? -result.taxDue : 0,
+  };
 }
