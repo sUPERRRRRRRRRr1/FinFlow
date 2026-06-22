@@ -1,4 +1,4 @@
-import type { Bracket, BracketDetail, IncomeItem, IncomeType, TaxRules, Deductions, AllowanceLine, TaxProfile, TaxResult, FilingInfo } from './types.js';
+import type { Bracket, BracketDetail, IncomeItem, IncomeType, TaxRules, Deductions, AllowanceLine, TaxProfile, TaxResult, FilingInfo, SavingSuggestion } from './types.js';
 
 /** ภาษีวิธีขั้นบันได: เก็บภาษีเฉพาะส่วนที่อยู่ในแต่ละขั้น */
 export function progressiveTax(netIncome: number, brackets: Bracket[]): { tax: number; brackets: BracketDetail[] } {
@@ -184,4 +184,35 @@ export function filingInfo(profile: TaxProfile, result: TaxResult, rules: TaxRul
     deadlineOnline: `~8 เม.ย. ${fy}`,
     refundable: result.taxDue < 0 ? -result.taxDue : 0,
   };
+}
+
+/** คำแนะนำประหยัดภาษี: ช่องลดหย่อนที่เหลือ × อัตราภาษีขั้นสุดท้าย */
+export function suggestSavings(profile: TaxProfile, rules: TaxRules, result: TaxResult): SavingSuggestion[] {
+  const mr = result.marginalRate;
+  if (mr <= 0) return [];
+  const gross = result.grossTaxable;
+  const d = profile.deductions;
+  const out: SavingSuggestion[] = [];
+
+  // เพดานคงเหลือของกลุ่มเกษียณรวม
+  const usedRetirement = Math.min(d.providentFund, rules.providentRate * gross)
+    + Math.min(d.rmf, Math.min(rules.rmfRate * gross, rules.rmfCap))
+    + Math.min(d.ssf, Math.min(rules.ssfRate * gross, rules.ssfCap))
+    + Math.min(d.pensionInsurance, Math.min(rules.pensionInsRate * gross, rules.pensionInsCap))
+    + Math.min(d.nsf, rules.nsfCap);
+  const combinedRoom = Math.max(0, rules.retirementCombinedCap - usedRetirement);
+
+  const add = (id: string, label: string, used: number, cap: number, ref: string, extraLimit = Infinity) => {
+    const room = Math.max(0, Math.min(cap - used, extraLimit));
+    if (room > 0) out.push({ id, label, used: Math.round(used), cap: Math.round(cap), room: Math.round(room), estimatedSaving: Math.round(room * mr), ref });
+  };
+
+  add('ssf', 'ซื้อ SSF เพิ่ม', d.ssf, Math.min(rules.ssfRate * gross, rules.ssfCap), 'SSF ≤30%, ≤200,000 (อยู่ในเพดานรวม 500k)', combinedRoom);
+  add('rmf', 'ซื้อ RMF เพิ่ม', d.rmf, Math.min(rules.rmfRate * gross, rules.rmfCap), 'RMF ≤30%, ≤500,000 (อยู่ในเพดานรวม 500k)', combinedRoom);
+  add('thaiEsg', 'ซื้อ Thai ESG เพิ่ม', d.thaiEsg, Math.min(rules.thaiEsgRate * gross, rules.thaiEsgCap), 'Thai ESG ≤30%, ≤300,000 (แยกเพดาน)');
+  add('pensionInsurance', 'ทำประกันบำนาญเพิ่ม', d.pensionInsurance, Math.min(rules.pensionInsRate * gross, rules.pensionInsCap), 'ประกันบำนาญ ≤15%, ≤200,000', combinedRoom);
+  add('lifeHealth', 'ทำประกันชีวิต/สุขภาพเพิ่ม', Math.min(d.lifeInsurance + Math.min(d.healthInsurance, rules.healthSubCap), rules.lifeHealthCap), rules.lifeHealthCap, 'ประกันชีวิต+สุขภาพ ≤100,000');
+  add('homeLoan', 'ดอกเบี้ยบ้าน (ถ้ามี)', d.homeLoanInterest, rules.homeLoanCap, 'ดอกเบี้ยกู้ซื้อบ้าน ≤100,000');
+
+  return out.sort((a, b) => b.estimatedSaving - a.estimatedSaving);
 }

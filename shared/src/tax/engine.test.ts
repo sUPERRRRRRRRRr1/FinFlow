@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RULES_2567 } from './rules2567.js';
-import { progressiveTax, marginalRate, expenseDeduction, computeAllowances, computeTax, filingInfo, defaultTaxProfile } from './engine.js';
+import { progressiveTax, marginalRate, expenseDeduction, computeAllowances, computeTax, filingInfo, defaultTaxProfile, suggestSavings } from './engine.js';
 import type { IncomeItem, Deductions, TaxProfile } from './types.js';
 
 describe('progressiveTax', () => {
@@ -118,5 +118,22 @@ describe('filingInfo', () => {
     const f = filingInfo(p, computeTax(p, RULES_2567), RULES_2567);
     expect(f.mustFile).toBe(true);
     expect(f.form).toBe('ภ.ง.ด.91');
+  });
+});
+
+describe('suggestSavings', () => {
+  it('estimates SSF room × marginal rate and respects the cap', () => {
+    const p = baseProfile({ income: [{ type: '40(1)', amount: 1200000, source: 'user' }] });
+    const r = computeTax(p, RULES_2567);
+    const s = suggestSavings(p, RULES_2567, r);
+    const ssf = s.find((x) => x.id === 'ssf')!;
+    expect(ssf.room).toBe(200000); // min(30%*1.2m=360k, 200k cap), nothing used
+    expect(ssf.estimatedSaving).toBeCloseTo(200000 * r.marginalRate, 0);
+  });
+
+  it('returns nothing actionable when marginal rate is 0', () => {
+    const p = baseProfile({ income: [{ type: '40(1)', amount: 200000, source: 'user' }] });
+    const r = computeTax(p, RULES_2567); // net below 150k → marginal 0
+    expect(suggestSavings(p, RULES_2567, r)).toHaveLength(0);
   });
 });
