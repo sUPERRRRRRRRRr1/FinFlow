@@ -1,5 +1,8 @@
 import type {
   HealthScore,
+  ScorePillar,
+  ScoreMetric,
+  ScoreProfile,
   Insight,
   SankeyGraph,
   CategoryTrend,
@@ -7,9 +10,34 @@ import type {
   Transaction,
   BudgetStatus,
   Budget,
+  AccountConfig,
+  AccountKind,
+  TaxProfile, TaxResult, SavingSuggestion, FilingInfo, IncomeItem, Deductions, IncomeType,
 } from '@finflow/shared';
 
-export type { HealthScore, Insight, SankeyGraph, CategoryTrend, RecurringItem, Transaction, BudgetStatus, Budget };
+export type { HealthScore, ScorePillar, ScoreMetric, ScoreProfile, Insight, SankeyGraph, CategoryTrend, RecurringItem, Transaction, BudgetStatus, Budget, AccountConfig, AccountKind, TaxProfile, TaxResult, SavingSuggestion, FilingInfo, IncomeItem, Deductions, IncomeType };
+
+export interface TaxOverviewResponse {
+  profile: TaxProfile;
+  result: TaxResult;
+  suggestions: SavingSuggestion[];
+  filing: FilingInfo;
+  vatPaidEstimate: number;
+  dataMonths: number;
+  annualized: boolean;
+}
+
+/** บัญชี/กระเป๋าที่ระบบตรวจพบในข้อมูล (สำหรับให้ผู้ใช้ตั้งชื่อ) */
+export interface DetectedAccount {
+  id: string;
+  source: string;
+  count: number;
+}
+
+export interface AccountsResponse {
+  accounts: AccountConfig[];
+  detected: DetectedAccount[];
+}
 
 export interface MonthPoint {
   key: string;
@@ -21,8 +49,8 @@ export interface MonthPoint {
 }
 
 export interface Overview {
-  totals: { income: number; expense: number; savings: number; net: number; savingsRate: number };
-  bySource: { source: string; label: string; income: number; expense: number; net: number; count: number }[];
+  totals: { income: number; expense: number; savings: number; net: number; savingsRate: number; totalBalance: number };
+  bySource: { source: string; label: string; income: number; expense: number; net: number; count: number; balance: number | null }[];
   byCategory: { category: string; label: string; color: string; icon: string; amount: number; pct: number }[];
   monthly: MonthPoint[];
   health: HealthScore;
@@ -83,5 +111,5 @@ export interface BudgetsData {
 export interface SystemStatus {
   ok: boolean;
   transactions: number;
-  features: { geminiEnabled: boolean; gmailConfigured: boolean; gmailConnected: boolean };
+  features: { geminiEnabled: boolean; groqEnabled: boolean; gmailConfigured: boolean; gmailConnected: boolean };
 }
