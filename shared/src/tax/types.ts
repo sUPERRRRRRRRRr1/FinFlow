@@ -19,6 +19,12 @@ export type IncomeType =
   | '40(7)'
   | '40(8)';
 
+export interface IncomeItem {
+  type: IncomeType;
+  amount: number;
+  source: string;
+}
+
 export interface ExpenseRule {
   rate: number;
   cap?: number;
