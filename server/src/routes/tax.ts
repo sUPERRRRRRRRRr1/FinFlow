@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { taxOverview, getRules, defaultTaxProfile } from '@finflow/shared';
+import { taxOverview, getRules, defaultTaxProfile, detectIncome } from '@finflow/shared';
 import type { TaxProfile } from '@finflow/shared';
 import { getTaxProfile, setTaxProfile } from '../db.js';
 import { loadTransactions } from './_helpers.js';
@@ -10,7 +10,11 @@ export const taxRouter = Router();
 /** GET /api/tax — ผลภาษี + คำแนะนำ + ข้อมูลยื่น (เดารายได้จากธุรกรรมถ้ายังไม่ตั้งค่า) */
 taxRouter.get('/', (req, res) => {
   const txns = loadTransactions(req);
-  const profile = getTaxProfile();
+  const saved = getTaxProfile();
+  // คืน "โปรไฟล์ที่ใช้จริง": ถ้าผู้ใช้ยังไม่กรอกรายได้เอง เติมรายได้ที่เดาจากธุรกรรม
+  // เพื่อให้ตัววางแผนสดฝั่ง client คำนวณฐานภาษีตรงกับ result/suggestions ของเซิร์ฟเวอร์
+  const hasUserIncome = saved.income.some((i) => i.source === 'user');
+  const profile = hasUserIncome ? saved : { ...saved, income: detectIncome(txns, { annualize: saved.annualize }) };
   res.json({ profile, ...taxOverview(txns, profile, getRules(profile.taxYear)) });
 });
 
