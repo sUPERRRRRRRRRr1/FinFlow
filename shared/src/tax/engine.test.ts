@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { RULES_2567 } from './rules2567.js';
-import { progressiveTax, marginalRate, expenseDeduction } from './engine.js';
-import type { IncomeItem } from './types.js';
+import { progressiveTax, marginalRate, expenseDeduction, computeAllowances } from './engine.js';
+import type { IncomeItem, Deductions } from './types.js';
 
 describe('progressiveTax', () => {
   const b = RULES_2567.brackets;
@@ -35,5 +35,37 @@ describe('expenseDeduction', () => {
   });
   it('applies 60% flat to 40(8)', () => {
     expect(expenseDeduction([inc('40(8)', 100000)], RULES_2567)).toBe(60000);
+  });
+});
+
+const emptyDed: Deductions = {
+  spouse: false, children: 0, childrenSecondChildPlus: 0, parents: 0, disabled: 0, maternity: 0,
+  socialSecurity: 0, lifeInsurance: 0, healthInsurance: 0, parentHealthInsurance: 0, pensionInsurance: 0,
+  providentFund: 0, rmf: 0, ssf: 0, thaiEsg: 0, nsf: 0,
+  homeLoanInterest: 0, donationGeneral: 0, donationEducation: 0, easyEReceipt: 0,
+};
+
+describe('computeAllowances', () => {
+  it('always includes the 60,000 personal allowance', () => {
+    expect(computeAllowances(emptyDed, 500000, 400000, RULES_2567).total).toBe(60000);
+  });
+  it('caps combined retirement funds at 500,000', () => {
+    const d = { ...emptyDed, rmf: 500000, ssf: 200000, providentFund: 500000 };
+    // each individually capped, then combined clipped to 500k; +60k personal
+    expect(computeAllowances(d, 5000000, 4000000, RULES_2567).total).toBe(560000);
+  });
+  it('caps SSF at 30% of income and 200,000', () => {
+    const d = { ...emptyDed, ssf: 200000 };
+    // income 400k → 30% = 120k is the binding cap
+    const r = computeAllowances(d, 400000, 300000, RULES_2567);
+    const ssf = r.breakdown.find((x) => x.id === 'retirement')!;
+    expect(ssf.used).toBe(120000);
+  });
+  it('limits donations to 10% of income after other allowances', () => {
+    const d = { ...emptyDed, donationGeneral: 100000 };
+    // after-expense 300k, minus 60k personal = 240k base → 10% = 24,000
+    const r = computeAllowances(d, 400000, 300000, RULES_2567);
+    const don = r.breakdown.find((x) => x.id === 'donation')!;
+    expect(don.used).toBe(24000);
   });
 });

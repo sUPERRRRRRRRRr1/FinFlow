@@ -69,3 +69,34 @@ export interface TaxRules {
   interestWhtRate: number;
   freelanceWhtRate: number;
 }
+
+export interface Deductions {
+  spouse: boolean;
+  children: number;
+  childrenSecondChildPlus: number;
+  parents: number;
+  disabled: number;
+  maternity: number;
+  socialSecurity: number;
+  lifeInsurance: number;
+  healthInsurance: number;
+  parentHealthInsurance: number;
+  pensionInsurance: number;
+  providentFund: number;
+  rmf: number;
+  ssf: number;
+  thaiEsg: number;
+  nsf: number;
+  homeLoanInterest: number;
+  donationGeneral: number;
+  donationEducation: number;
+  easyEReceipt: number;
+}
+
+export interface AllowanceLine {
+  id: string;
+  label: string;
+  used: number;
+  cap: number;
+  ref: string;
+}
