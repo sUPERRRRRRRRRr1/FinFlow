@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useApi, apiSend } from '../lib/api';
+import { useApi, apiSend, apiGet } from '../lib/api';
 import type { TaxOverviewResponse, TaxProfile, Deductions } from '../lib/types';
 import { PageHead, Async } from '../components/ui';
 import { thb } from '../lib/format';
@@ -135,6 +135,40 @@ function TaxBody({ o, reload }: { o: TaxOverviewResponse; reload: () => void }) 
       </div>
 
       <TaxPlanner profile={o.profile} suggestions={o.suggestions} baseTax={r.taxBeforeCredit} />
+      <TaxAdviceCard />
+    </div>
+  );
+}
+
+function TaxAdviceCard() {
+  const [advice, setAdvice] = useState<{ text: string; source: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const ask = async () => {
+    setLoading(true);
+    try {
+      setAdvice(await apiGet('/tax/advice'));
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <div className="card">
+      <div className="row between">
+        <h3>คำแนะนำภาษีจาก AI</h3>
+        <button className="btn primary" onClick={ask} disabled={loading}>
+          {loading ? 'กำลังคิด…' : '✨ ขอคำแนะนำภาษี'}
+        </button>
+      </div>
+      {advice ? (
+        <>
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, marginTop: 10 }}>{advice.text}</div>
+          <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+            ที่มา: {advice.source === 'groq' ? 'Groq' : advice.source === 'gemini' ? 'Google Gemini' : 'ระบบ rule-based'}
+          </div>
+        </>
+      ) : (
+        <div className="sub" style={{ marginTop: 10 }}>กดเพื่อให้ AI สรุปคำแนะนำการวางแผนและประหยัดภาษีจากตัวเลขของคุณ</div>
+      )}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { taxOverview, getRules, defaultTaxProfile, detectIncome } from '@finflow
 import type { TaxProfile } from '@finflow/shared';
 import { getTaxProfile, setTaxProfile } from '../db.js';
 import { loadTransactions } from './_helpers.js';
+import { taxAdvice } from '../services/gemini.js';
 
 export const taxRouter = Router();
 
@@ -16,6 +17,15 @@ taxRouter.get('/', (req, res) => {
   const hasUserIncome = saved.income.some((i) => i.source === 'user');
   const profile = hasUserIncome ? saved : { ...saved, income: detectIncome(txns, { annualize: saved.annualize }) };
   res.json({ profile, ...taxOverview(txns, profile, getRules(profile.taxYear)) });
+});
+
+/** GET /api/tax/advice — คำแนะนำภาษีเรียบเรียงโดย AI (มี rule-based fallback) */
+taxRouter.get('/advice', async (req, res) => {
+  const txns = loadTransactions(req);
+  const saved = getTaxProfile();
+  const hasUserIncome = saved.income.some((i) => i.source === 'user');
+  const profile = hasUserIncome ? saved : { ...saved, income: detectIncome(txns, { annualize: saved.annualize }) };
+  res.json(await taxAdvice(taxOverview(txns, profile, getRules(profile.taxYear))));
 });
 
 /** PUT /api/tax — บันทึกโปรไฟล์ภาษี (รายได้ที่แก้เอง + ค่าลดหย่อน) */
