@@ -1,4 +1,4 @@
-import type { Bracket, BracketDetail, IncomeItem, IncomeType, TaxRules, Deductions, AllowanceLine, TaxProfile, TaxResult, FilingInfo, SavingSuggestion } from './types.js';
+import type { Bracket, BracketDetail, IncomeItem, IncomeType, TaxRules, Deductions, AllowanceLine, TaxProfile, TaxResult, FilingInfo, SavingSuggestion, TaxOverview } from './types.js';
 
 /** ภาษีวิธีขั้นบันได: เก็บภาษีเฉพาะส่วนที่อยู่ในแต่ละขั้น */
 export function progressiveTax(netIncome: number, brackets: Bracket[]): { tax: number; brackets: BracketDetail[] } {
@@ -215,4 +215,30 @@ export function suggestSavings(profile: TaxProfile, rules: TaxRules, result: Tax
   add('homeLoan', 'ดอกเบี้ยบ้าน (ถ้ามี)', d.homeLoanInterest, rules.homeLoanCap, 'ดอกเบี้ยกู้ซื้อบ้าน ≤100,000');
 
   return out.sort((a, b) => b.estimatedSaving - a.estimatedSaving);
+}
+
+// ─── Task 6: taxOverview composition ─────────────────────────────────────────
+
+import type { Transaction } from '../types.js';
+import { isConsumption } from '../stats/timeseries.js';
+import { dataMonths, detectIncome } from './detect.js';
+
+/**
+ * รวมทุกอย่างเป็นผลภาษีพร้อมแสดง: ถ้า profile ยังไม่มีรายการเงินได้ ให้เดาจากธุรกรรม
+ * (ผู้ใช้บันทึกรายการเอง = source 'user' จะถูกใช้แทนการเดา)
+ */
+export function taxOverview(txns: Transaction[], profile: TaxProfile, rules: TaxRules): TaxOverview {
+  const months = dataMonths(txns);
+  const hasUserIncome = profile.income.some((i) => i.source === 'user');
+  const income = hasUserIncome ? profile.income : detectIncome(txns, { annualize: profile.annualize });
+  const effective: TaxProfile = { ...profile, income };
+
+  const result = computeTax(effective, rules);
+  const suggestions = suggestSavings(effective, rules, result);
+  const filing = filingInfo(effective, result, rules);
+
+  const consumption = txns.filter(isConsumption).reduce((a, t) => a + t.amount, 0);
+  const vatPaidEstimate = Math.round(consumption * (7 / 107));
+
+  return { result, suggestions, filing, vatPaidEstimate, dataMonths: months, annualized: profile.annualize && months < 12 && !hasUserIncome };
 }

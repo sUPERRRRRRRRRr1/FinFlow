@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { RULES_2567 } from './rules2567.js';
-import { progressiveTax, marginalRate, expenseDeduction, computeAllowances, computeTax, filingInfo, defaultTaxProfile, suggestSavings } from './engine.js';
+import { progressiveTax, marginalRate, expenseDeduction, computeAllowances, computeTax, filingInfo, defaultTaxProfile, suggestSavings, taxOverview } from './engine.js';
 import type { IncomeItem, Deductions, TaxProfile } from './types.js';
+import type { Transaction } from '../types.js';
 
 describe('progressiveTax', () => {
   const b = RULES_2567.brackets;
@@ -135,5 +136,17 @@ describe('suggestSavings', () => {
     const p = baseProfile({ income: [{ type: '40(1)', amount: 200000, source: 'user' }] });
     const r = computeTax(p, RULES_2567); // net below 150k → marginal 0
     expect(suggestSavings(p, RULES_2567, r)).toHaveLength(0);
+  });
+});
+
+describe('taxOverview', () => {
+  it('uses the saved profile income when present and computes VAT paid', () => {
+    const txns: Transaction[] = [
+      { id: 'a', date: '2025-01-05', amount: 10700, direction: 'out', counterparty: 'ร้าน', source: 'kbank', category: 'shopping' },
+    ];
+    const p = baseProfile({ income: [{ type: '40(1)', amount: 600000, source: 'user' }] });
+    const o = taxOverview(txns, p, RULES_2567);
+    expect(o.result.netIncome).toBe(440000);
+    expect(o.vatPaidEstimate).toBeCloseTo(10700 * (7 / 107), 0); // ≈ 700
   });
 });
