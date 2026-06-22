@@ -4,13 +4,16 @@ import {
   CATEGORY_META,
   computeHealthScore,
   expenseByCategory,
+  getRules,
   isConsumption,
   isRealIncome,
   monthKey,
   round,
+  taxOverview,
   thaiMonthLabel,
 } from '@finflow/shared';
 import { toSafeTransaction, type SafeTransaction } from '../sanitize.js';
+import { getScoreProfile, getTaxProfile } from '../db.js';
 
 const THAI_MONTH_NAMES: Record<string, number> = {
   มกราคม: 1, กุมภาพันธ์: 2, มีนาคม: 3, เมษายน: 4, พฤษภาคม: 5, มิถุนายน: 6,
@@ -115,8 +118,17 @@ export function buildChatContext(question: string, txns: Transaction[]): ChatCon
   }
 
   if (/คะแนน|สุขภาพ|health|score/i.test(q)) {
-    const h = computeHealthScore(scope);
+    const h = computeHealthScore(scope, getScoreProfile());
     facts.push(`คะแนนสุขภาพการเงิน ${h.total}/100 (${h.grade})`);
+  }
+
+  if (/ภาษี|ลดหย่อน|ยื่น|ssf|rmf|thaiesg|บริจาค|เงินได้/i.test(q)) {
+    const profile = getTaxProfile();
+    const o = taxOverview(scope, profile, getRules(profile.taxYear));
+    const r = o.result;
+    facts.push(`ภาษี: เงินได้สุทธิ ${fmt(round(r.netIncome))} บาท, ภาษีก่อนเครดิต ${fmt(round(r.taxBeforeCredit))} บาท, ${r.taxDue >= 0 ? `ต้องจ่ายเพิ่ม ${fmt(round(r.taxDue))}` : `ขอคืนได้ ${fmt(round(-r.taxDue))}`} บาท (อัตราขั้นสุดท้าย ${(r.marginalRate * 100).toFixed(0)}%)`);
+    if (o.suggestions[0]) facts.push(`แนะนำประหยัดภาษี: ${o.suggestions[0].label} อีก ${fmt(o.suggestions[0].room)} → ประหยัด ~${fmt(o.suggestions[0].estimatedSaving)} บาท`);
+    facts.push(o.filing.mustFile ? `ต้องยื่น ${o.filing.form} ภายใน ${o.filing.deadlineOnline}` : 'รายได้ยังไม่ถึงเกณฑ์ต้องยื่น');
   }
 
   // ถ้ายังไม่มี fact เลย ให้สรุปภาพรวม
