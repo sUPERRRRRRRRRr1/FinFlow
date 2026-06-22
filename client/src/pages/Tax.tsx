@@ -1,9 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useApi, apiSend, apiGet } from '../lib/api';
-import type { TaxOverviewResponse, TaxProfile, Deductions } from '../lib/types';
+import type { TaxOverviewResponse, TaxProfile, Deductions, IncomeItem, IncomeType } from '../lib/types';
 import { PageHead, Async } from '../components/ui';
 import { thb } from '../lib/format';
 import TaxPlanner from '../components/TaxPlanner';
+
+const INCOME_TYPES: { value: IncomeType; label: string }[] = [
+  { value: '40(1)', label: '40(1) เงินเดือน' },
+  { value: '40(2)', label: '40(2) รับจ้าง/ฟรีแลนซ์' },
+  { value: '40(3)', label: '40(3) ลิขสิทธิ์' },
+  { value: '40(4)', label: '40(4) ดอกเบี้ย/ปันผล' },
+  { value: '40(5)', label: '40(5) ค่าเช่า' },
+  { value: '40(6)', label: '40(6) วิชาชีพอิสระ' },
+  { value: '40(7)', label: '40(7) รับเหมา' },
+  { value: '40(8)', label: '40(8) ธุรกิจอื่นๆ' },
+];
 
 const DEDUCTION_FIELDS: { key: keyof Deductions; label: string; type: 'number' | 'bool' }[] = [
   { key: 'spouse', label: 'คู่สมรส (ไม่มีเงินได้)', type: 'bool' },
@@ -45,7 +56,7 @@ function TaxBody({ o, reload }: { o: TaxOverviewResponse; reload: () => void }) 
   const save = async () => {
     setSaving(true);
     try {
-      await apiSend('/tax', 'PUT', profile);
+      await apiSend('/tax', 'PUT', { ...profile, income: profile.income.map((i) => ({ ...i, source: 'user' })) });
       reload();
     } finally {
       setSaving(false);
@@ -54,6 +65,12 @@ function TaxBody({ o, reload }: { o: TaxOverviewResponse; reload: () => void }) 
 
   const setDed = (key: keyof Deductions, value: number | boolean) =>
     setProfile((p) => ({ ...p, deductions: { ...p.deductions, [key]: value } }));
+
+  const setIncome = (income: IncomeItem[]) => setProfile((p) => ({ ...p, income }));
+  const updateIncome = (idx: number, patch: Partial<IncomeItem>) =>
+    setIncome(profile.income.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+  const addIncome = () => setIncome([...profile.income, { type: '40(1)', amount: 0, source: 'user' }]);
+  const removeIncome = (idx: number) => setIncome(profile.income.filter((_, i) => i !== idx));
 
   const r = o.result;
   return (
@@ -107,6 +124,51 @@ function TaxBody({ o, reload }: { o: TaxOverviewResponse; reload: () => void }) 
             <div className="sub">บุคคลธรรมดาทั่วไปไม่ใช่ผู้เสีย VAT — นี่คือ VAT แฝงในยอดซื้อ (7/107)</div>
             <div style={{ fontSize: 24, fontWeight: 700 }}>{thb(o.vatPaidEstimate)}</div>
           </div>
+        </div>
+      </div>
+
+      {/* ฟอร์มเงินได้ */}
+      <div className="card">
+        <h3>เงินได้ของคุณ (ทั้งปี)</h3>
+        <div className="sub">ระบบเดาให้จากธุรกรรมเท่าที่ทำได้ — โปรดตรวจ/แก้ให้ตรงจริง แยกตามประเภทเงินได้ (ม.40)</div>
+        {profile.income.length === 0 && (
+          <div className="muted" style={{ fontSize: 13, padding: '8px 0' }}>ยังไม่มีรายการ — กด "เพิ่มรายได้"</div>
+        )}
+        {profile.income.map((it, idx) => (
+          <div key={idx} className="row wrap" style={{ gap: 8, alignItems: 'center', padding: '6px 0', borderTop: idx ? '1px solid var(--border)' : 'none' }}>
+            <select value={it.type} onChange={(e) => updateIncome(idx, { type: e.target.value as IncomeType })}
+              style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontFamily: 'inherit' }}>
+              {INCOME_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+            <label className="muted" style={{ fontSize: 12 }}>จำนวน
+              <input type="number" min={0} value={it.amount || 0} onChange={(e) => updateIncome(idx, { amount: Number(e.target.value) })} style={{ width: 110, marginLeft: 4, textAlign: 'right' }} />
+            </label>
+            <label className="muted" style={{ fontSize: 12 }}>หัก ณ ที่จ่าย
+              <input type="number" min={0} value={it.withholding || 0} onChange={(e) => updateIncome(idx, { withholding: Number(e.target.value) })} style={{ width: 90, marginLeft: 4, textAlign: 'right' }} />
+            </label>
+            {it.type === '40(4)' && (
+              <label className="muted" style={{ fontSize: 12 }}>
+                <input type="checkbox" checked={!!it.dividend} onChange={(e) => updateIncome(idx, { dividend: e.target.checked })} /> เงินปันผล
+              </label>
+            )}
+            <button className="btn" onClick={() => removeIncome(idx)} style={{ padding: '4px 10px' }}>ลบ</button>
+          </div>
+        ))}
+        <button className="btn" style={{ marginTop: 10 }} onClick={addIncome}>＋ เพิ่มรายได้</button>
+        <div className="row wrap" style={{ gap: 16, marginTop: 12, alignItems: 'center' }}>
+          <label style={{ fontSize: 13 }}>
+            <input type="checkbox" checked={profile.married} onChange={(e) => setProfile((p) => ({ ...p, married: e.target.checked }))} /> สมรส (คู่สมรสไม่มีเงินได้)
+          </label>
+          <label style={{ fontSize: 13 }}>
+            <input type="checkbox" checked={profile.annualize} onChange={(e) => setProfile((p) => ({ ...p, annualize: e.target.checked }))} /> ประมาณการทั้งปี
+          </label>
+          <label style={{ fontSize: 13 }}>เงินปันผล:
+            <select value={profile.dividendMode} onChange={(e) => setProfile((p) => ({ ...p, dividendMode: e.target.value as 'final' | 'include' }))}
+              style={{ marginLeft: 4, padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontFamily: 'inherit' }}>
+              <option value="final">Final 10% (ไม่รวมคำนวณ)</option>
+              <option value="include">นำมารวม + เครดิต</option>
+            </select>
+          </label>
         </div>
       </div>
 
