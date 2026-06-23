@@ -3,7 +3,7 @@ import type { Granularity } from '@finflow/shared';
 import { overview, timeline, categories, anomalies } from '../services/analytics.js';
 import { financialAdvice } from '../services/gemini.js';
 import { computeHealthScore, generateInsights } from '@finflow/shared';
-import { getMeta } from '../db.js';
+import { getMeta, getScoreProfile } from '../db.js';
 import { loadTransactions } from './_helpers.js';
 
 export const analyticsRouter = Router();
@@ -49,6 +49,7 @@ analyticsRouter.get('/health', (req, res) => {
 /** GET /api/analytics/advice — คำแนะนำภาษาคน (Gemini ถ้ามี key, ไม่งั้น rule-based) */
 analyticsRouter.get('/advice', async (req, res) => {
   const txns = loadTransactions(req);
-  const advice = await financialAdvice(computeHealthScore(txns), generateInsights(txns));
+  const profile = getScoreProfile();
+  const advice = await financialAdvice(computeHealthScore(txns, profile), generateInsights(txns, profile));
   res.json(advice);
 });

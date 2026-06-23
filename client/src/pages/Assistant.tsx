@@ -66,7 +66,7 @@ export default function Assistant() {
               {m.facts && (
                 <details style={{ marginTop: 4 }}>
                   <summary className="muted" style={{ fontSize: 11.5, cursor: 'pointer' }}>
-                    🔢 ตัวเลขที่ใช้ตอบ (คำนวณด้วยโค้ด) · ที่มา: {m.source === 'gemini' ? 'Gemini' : 'rule-based'}
+                    🔢 ตัวเลขที่ใช้ตอบ (คำนวณด้วยโค้ด) · ที่มา: {m.source === 'groq' ? 'Groq' : m.source === 'gemini' ? 'Gemini' : 'rule-based'}
                   </summary>
                   <pre className="mono" style={{ fontSize: 11, whiteSpace: 'pre-wrap', background: 'var(--surface-2)', padding: 10, borderRadius: 8, marginTop: 4 }}>
                     {m.facts}

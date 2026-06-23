@@ -16,7 +16,7 @@ transactionsRouter.get('/', (req, res) => {
 });
 
 /** POST /api/transactions — เพิ่มรายการเอง (เข้า pipeline เดียวกับการนำเข้าอัตโนมัติ) */
-transactionsRouter.post('/', (req, res) => {
+transactionsRouter.post('/', async (req, res) => {
   const schema = z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     time: z.string().optional(),
@@ -39,7 +39,7 @@ transactionsRouter.post('/', (req, res) => {
     source: (d.source ?? 'manual') as Source,
     category: d.category ?? classifyByKeyword(d.counterparty, d.direction),
   };
-  res.json({ ok: true, transaction: txn, ...ingestAndStore([txn]) });
+  res.json({ ok: true, transaction: txn, ...(await ingestAndStore([txn])) });
 });
 
 /** PATCH /api/transactions/:id/category — แก้หมวด (รองรับการแก้ที่ AI จัดผิด) */

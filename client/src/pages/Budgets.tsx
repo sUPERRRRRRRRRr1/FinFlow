@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { CATEGORY_META, EXPENSE_CATEGORIES } from '@finflow/shared';
+import { CATEGORY_META, EXPENSE_CATEGORIES, monthKey } from '@finflow/shared';
 import { useApi, apiSend } from '../lib/api';
+import { useDataScope } from '../lib/dataScope';
 import type { BudgetsData } from '../lib/types';
 import { PageHead, Async } from '../components/ui';
 import { thb, pct } from '../lib/format';
@@ -9,7 +10,9 @@ const statusColor: Record<string, string> = { ok: 'var(--good)', warn: 'var(--wa
 const statusLabel: Record<string, string> = { ok: 'อยู่ในงบ', warn: 'ใกล้เต็มงบ', over: 'เกินงบ' };
 
 export default function Budgets() {
-  const state = useApi<BudgetsData>('/budgets');
+  // งบเป็นรายเดือน: ใช้เดือนของ "ปลายช่วง" ที่เลือก global (ถ้าทั้งหมด → ปล่อยให้ backend ใช้เดือนล่าสุด)
+  const { period } = useDataScope();
+  const state = useApi<BudgetsData>(period.to ? `/budgets?month=${monthKey(period.to)}` : '/budgets');
   const [addCat, setAddCat] = useState('');
   const [addLimit, setAddLimit] = useState('');
 

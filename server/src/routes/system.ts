@@ -1,9 +1,23 @@
 import { Router } from 'express';
 import { flags } from '../config.js';
-import { countTransactions } from '../db.js';
+import { countTransactions, getScoreProfile, setScoreProfile } from '../db.js';
 import { getAuthUrl, exchangeCode, isConnected } from '../services/gmail.js';
 
 export const systemRouter = Router();
+
+/** GET /api/score-profile — โปรไฟล์เกณฑ์คะแนนสุขภาพการเงินที่ใช้อยู่ (นักเรียน/ผู้ใหญ่) */
+systemRouter.get('/score-profile', (_req, res) => {
+  res.json({ profile: getScoreProfile() });
+});
+
+/** PUT /api/score-profile — ตั้งโปรไฟล์เกณฑ์ ({ profile: 'adult' | 'student' }) */
+systemRouter.put('/score-profile', (req, res) => {
+  const profile = (req.body as { profile?: string })?.profile;
+  if (profile !== 'adult' && profile !== 'student')
+    return res.status(400).json({ error: "profile ต้องเป็น 'adult' หรือ 'student'" });
+  setScoreProfile(profile);
+  res.json({ ok: true, profile });
+});
 
 /** GET /api/status — สถานะระบบ + ฟีเจอร์ที่เปิดใช้ */
 systemRouter.get('/status', (_req, res) => {
@@ -12,6 +26,7 @@ systemRouter.get('/status', (_req, res) => {
     transactions: countTransactions(),
     features: {
       geminiEnabled: flags.geminiEnabled,
+      groqEnabled: flags.groqEnabled,
       gmailConfigured: flags.gmailConfigured,
       gmailConnected: isConnected(),
     },

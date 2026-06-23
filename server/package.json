@@ -16,6 +16,8 @@
     "express": "^4.21.2",
     "googleapis": "^144.0.0",
     "nanoid": "^5.0.9",
+    "pdfjs-dist": "^6.0.227",
+    "sharp": "^0.35.1",
     "tesseract.js": "^5.1.1",
     "zod": "^3.24.1"
   },

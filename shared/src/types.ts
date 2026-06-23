@@ -38,8 +38,13 @@ export interface Transaction {
   direction: Direction;
   /** ผู้รับ/ร้าน/ผู้ส่ง */
   counterparty: string;
-  /** กระเป๋า/ธนาคารต้นทาง */
+  /** กระเป๋า/ธนาคารต้นทาง (ชนิดกระเป๋า) */
   source: Source;
+  /**
+   * รหัสบัญชีเฉพาะเล่ม (เช่น เลขบัญชี KBank '160-3-73798-5') ใช้แยกหลายบัญชีในกระเป๋าชนิดเดียวกัน
+   * เช่น KBank บัญชีใช้จ่าย vs บัญชีเงินเก็บ — ไม่มี = ใช้ `source` เป็นกระเป๋า (กระเป๋าที่มีบัญชีเดียว)
+   */
+  account?: string;
   /** หมวดหมู่ (ผลสุดท้าย หลังใช้กฎร้านค้าของผู้ใช้แล้ว) */
   category: CategoryId;
   /** หมวดที่ระบบจัดอัตโนมัติ (keyword/AI) — เป็น baseline เวลาลบกฎจะกลับมาที่ค่านี้ */
@@ -58,6 +63,8 @@ export interface Transaction {
   isTransfer?: boolean;
   /** กลุ่มของการโอนที่จับคู่กันได้ (out↔in) */
   transferGroup?: string;
+  /** true = ข้อมูลตัวอย่าง (demo seed) · ไม่ตั้ง = ข้อมูลจริง (Gmail/อัปโหลด/เพิ่มเอง) */
+  demo?: boolean;
 }
 
 /** ช่วงเวลาในการ aggregate */
@@ -77,4 +84,41 @@ export interface MerchantRule {
   alias?: string;
   /** หมวดที่กำหนดให้ */
   category: CategoryId;
+}
+
+/** ประเภทการใช้งานของบัญชี (ให้ผู้ใช้ระบุเองว่าบัญชีนี้ใช้ทำอะไร) */
+export type AccountKind = 'daily' | 'savings' | 'wallet' | 'credit' | 'other';
+
+export const ACCOUNT_KIND_META: Record<AccountKind, { label: string; icon: string }> = {
+  daily: { label: 'ใช้จ่ายประจำวัน', icon: '🛒' },
+  savings: { label: 'เงินเก็บ/ออม', icon: '🐷' },
+  wallet: { label: 'กระเป๋าเงิน/จ่ายออนไลน์', icon: '📱' },
+  credit: { label: 'บัตรเครดิต', icon: '💳' },
+  other: { label: 'อื่นๆ', icon: '🏦' },
+};
+
+/**
+ * การตั้งค่าของผู้ใช้: "บัญชีเล่มนี้คือบัญชีอะไร"
+ * แก้ปัญหาที่ระบบมองเห็นแค่ชนิดกระเป๋า (kbank/truemoney) แต่ผู้ใช้มีหลายบัญชีในแบงก์เดียวกัน
+ * เก็บฝั่งเซิร์ฟเวอร์ (ไม่ลับ) — ส่วน "รหัส STM" ของแต่ละบัญชีเก็บในเครื่อง/เบราว์เซอร์เท่านั้น
+ */
+export interface AccountConfig {
+  /** คีย์บัญชี = เลขบัญชี (เช่น '160-3-73798-5') หรือชื่อ source (เช่น 'truemoney') ถ้ากระเป๋านั้นมีบัญชีเดียว */
+  id: string;
+  /** ชนิดกระเป๋า/ธนาคารต้นทาง */
+  source: Source;
+  /** ชื่อเล่นที่ผู้ใช้ตั้ง เช่น 'ใช้จ่ายหลัก', 'เงินเก็บ' */
+  nickname: string;
+  /** ประเภทการใช้งานบัญชี */
+  kind: AccountKind;
+  /** หมายเหตุเพิ่มเติม (ไม่บังคับ) */
+  note?: string;
+}
+
+/**
+ * คีย์ของ "กระเป๋า" สำหรับจัดกลุ่ม/แสดงผลทุกที่ในระบบ:
+ * ใช้เลขบัญชีถ้ามี (แยกหลายบัญชีในแบงก์เดียวกัน) ไม่งั้น fallback เป็นชนิดกระเป๋า
+ */
+export function walletKey(t: Pick<Transaction, 'account' | 'source'>): string {
+  return t.account ?? t.source;
 }

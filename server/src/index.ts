@@ -82,9 +82,9 @@ seedIfEmpty();
 app.listen(config.port, () => {
   console.log(`\n🪙  FinFlow API พร้อมใช้งานที่ http://localhost:${config.port}`);
   console.log(`   • ข้อมูลในระบบ: ${countTransactions()} รายการ`);
-  const textAi = flags.groqEnabled ? 'Groq ✅' : flags.geminiEnabled ? 'Gemini ✅' : 'ปิด (ใช้ fallback) — ใส่ GROQ_API_KEY หรือ GEMINI_API_KEY เพื่อเปิด';
-  console.log(`   • AI คำแนะนำ/แชท: ${textAi}`);
-  const ocr = flags.groqEnabled ? 'Groq vision (Llama 4) ✅' : flags.geminiEnabled ? 'Gemini ✅' : 'Tesseract (offline)';
+  const textAi = flags.geminiEnabled ? `Gemini (${config.gemini.model}) ✅` : flags.groqEnabled ? 'Groq ✅' : 'ปิด (ใช้ fallback) — ใส่ GEMINI_API_KEY หรือ GROQ_API_KEY เพื่อเปิด';
+  console.log(`   • AI คำแนะนำ/แชท/จัดหมวด: ${textAi}`);
+  const ocr = flags.geminiEnabled ? `Gemini vision (${config.gemini.model}) ✅` : flags.groqEnabled ? 'Groq vision (Llama 4) ✅' : 'Tesseract (offline)';
   console.log(`   • OCR สลิป: ${ocr}`);
   console.log(`   • Gmail: ${flags.gmailConfigured ? 'ตั้งค่าแล้ว ✅' : 'ปิด (โหมดเดโม)'}\n`);
 });

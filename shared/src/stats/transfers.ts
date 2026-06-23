@@ -1,5 +1,55 @@
-import type { Transaction } from '../types.js';
+import type { Transaction, AccountKind, CategoryId } from '../types.js';
+import { walletKey } from '../types.js';
 import { diffDays } from './dates.js';
+
+/** 4 ตัวท้ายของเลขบัญชี (ตัวเลขล้วน) — STM/สลิปปิดบังเลขบัญชีเป็น "X####" ด้วย 4 ตัวท้ายนี้ */
+export function accountLast4(accountId: string): string | null {
+  const digits = accountId.replace(/\D/g, '');
+  return digits.length >= 4 ? digits.slice(-4) : null;
+}
+
+export interface OwnAccountCode {
+  /** 4 ตัวท้ายของเลขบัญชี (= ที่ STM ปิดบังเป็น X####) */
+  code: string;
+  kind: AccountKind;
+  /** เลขบัญชีเต็ม (id) */
+  account: string;
+}
+
+/**
+ * ตั้งธง "การโอนระหว่างบัญชีของตัวเอง" จากเลข 4 ตัวท้าย (X####) ที่อยู่ใน rawDesc/ชื่อผู้รับ
+ * เทียบกับบัญชีที่ผู้ใช้ตั้งค่าไว้ — แก้ปัญหา matchTransfers จับคู่ไม่ได้เมื่อมี statement แค่ฝั่งเดียว
+ * (เช่น STM บัญชีออมครอบคลุมไม่ครบทุกเดือน) ทำเฉพาะรายการที่ยังไม่ถูกจับเป็น transfer:
+ *  - ออก → บัญชี "ออม" ของตัวเอง : category='savings' (นับเป็นเงินออม ไม่ใช่รายจ่าย)
+ *  - ออก → บัญชีตัวเองอื่น       : isTransfer=true (เป็นกลาง)
+ *  - เข้า ← บัญชีตัวเอง           : isTransfer=true (ไม่ใช่รายรับจริง เป็นเงินตัวเองที่ย้ายกลับ)
+ */
+export function tagOwnTransfers(txns: Transaction[], own: OwnAccountCode[]): Transaction[] {
+  const byCode = new Map(own.filter((o) => o.code).map((o) => [o.code, o] as const));
+  if (byCode.size === 0) return txns;
+  return txns.map((t) => {
+    if (t.isTransfer) return t; // จับคู่ได้แล้ว (matchTransfers) ไม่ต้องแตะ
+    const selfCode = t.account ? accountLast4(t.account) : null;
+    const text = `${t.rawDesc ?? ''} ${t.counterparty ?? ''}`;
+    const matches = text.match(/X(\d{4})(?!\d)/g);
+    if (!matches) return t;
+    let ref: OwnAccountCode | undefined;
+    for (const m of matches) {
+      const code = m.slice(1);
+      if (code === selfCode) continue; // อ้างถึงบัญชีตัวเอง (เลขเดียวกัน) ข้าม
+      const o = byCode.get(code);
+      if (o) {
+        ref = o;
+        break;
+      }
+    }
+    if (!ref) return t;
+    if (t.direction === 'out' && ref.kind === 'savings') {
+      return { ...t, category: 'savings' as CategoryId };
+    }
+    return { ...t, isTransfer: true, category: 'transfer' as CategoryId };
+  });
+}
 
 export interface TransferMatch {
   outId: string;
@@ -44,7 +94,7 @@ export function matchTransfers(
     let bestGap = Infinity;
     for (const inc of ins) {
       if (usedIn.has(inc.i)) continue;
-      if (inc.t.source === o.t.source) continue; // ต้องคนละกระเป๋า
+      if (walletKey(inc.t) === walletKey(o.t)) continue; // ต้องคนละบัญชี (แยกตามเลขบัญชี ไม่ใช่แค่ชนิดกระเป๋า)
       if (Math.abs(inc.t.amount - o.t.amount) > amountTol) continue;
       const gap = Math.abs(diffDays(o.t.date, inc.t.date));
       if (gap > dayWindow) continue;
@@ -68,8 +118,8 @@ export function matchTransfers(
         outId: outTx.id,
         inId: inTx.id,
         amount: outTx.amount,
-        fromSource: outTx.source,
-        toSource: inTx.source,
+        fromSource: walletKey(outTx),
+        toSource: walletKey(inTx),
         group: g,
       });
     }

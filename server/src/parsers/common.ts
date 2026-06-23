@@ -33,7 +33,7 @@ export function parseThaiDate(raw: string): string | null {
     const d = Number(m[1]);
     const mo = Number(m[2]);
     let y = Number(m[3]);
-    if (y < 100) y += y > 50 ? 2400 : 2500; // ปี 2 หลัก → สมมติเป็น พ.ศ.
+    if (y < 100) y += 2500; // ปี 2 หลัก = พ.ศ. ย่อ (เช่น 68 → 2568) ให้ตรงกับรูปเดือนไทยด้านล่าง
     return iso(toCE(y), mo, d);
   }
 
@@ -90,6 +90,7 @@ export function makeTxn(p: {
   time?: string;
   balanceAfter?: number;
   rawDesc?: string;
+  account?: string;
 }): Transaction {
   return {
     id: `${p.source}-${randomUUID().slice(0, 8)}`,
@@ -99,10 +100,20 @@ export function makeTxn(p: {
     direction: p.direction,
     counterparty: p.counterparty.trim() || (p.direction === 'in' ? 'เงินเข้า' : 'รายการ'),
     source: p.source,
+    account: p.account,
     category: classifyByKeyword(p.counterparty || p.rawDesc || '', p.direction),
     rawDesc: p.rawDesc,
     balanceAfter: p.balanceAfter,
   };
+}
+
+/**
+ * ดึงเลขบัญชีไทยรูปแบบ xxx-x-xxxxx-x (เช่น KBank '160-3-73798-5') จากหัว statement
+ * ใช้แยกหลายบัญชีในแบงก์เดียวกัน — ถ้าไม่พบคืน undefined (รายการจะถูกจัดกลุ่มตามชนิดกระเป๋าแทน)
+ */
+export function extractAccountNo(text: string): string | undefined {
+  const m = text.match(/\d{3}-\d-\d{4,6}-\d/);
+  return m ? m[0] : undefined;
 }
 
 export interface ParserContext {

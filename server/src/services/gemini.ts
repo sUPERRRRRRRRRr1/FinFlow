@@ -27,14 +27,41 @@ async function geminiGenerate(prompt: string): Promise<string | null> {
 }
 
 /**
- * เรียบเรียงข้อความด้วย LLM: ลอง Groq ก่อน (ถ้าตั้ง GROQ_API_KEY) แล้วค่อย Gemini
+ * Gemini multimodal (vision) สำหรับ OCR สลิป — ส่งรูป base64 + prompt, เปิด JSON mode
+ * คืน content (สตริง JSON) หรือ null ให้ผู้เรียกถอยไป provider ถัดไป
+ */
+export async function geminiVision(
+  imageBase64: string,
+  mimeType: string,
+  prompt: string,
+): Promise<string | null> {
+  if (!flags.geminiEnabled) return null;
+  client ??= new GoogleGenerativeAI(config.gemini.apiKey);
+  try {
+    const model = client.getGenerativeModel({
+      model: config.gemini.model,
+      generationConfig: { responseMimeType: 'application/json', temperature: 0 },
+    });
+    const res = await model.generateContent([
+      { text: prompt },
+      { inlineData: { data: imageBase64, mimeType } },
+    ]);
+    return res.response.text().trim() || null;
+  } catch (err) {
+    console.error('[gemini-vision] error:', (err as Error).message);
+    return null;
+  }
+}
+
+/**
+ * เรียบเรียงข้อความด้วย LLM: ลอง Gemini ก่อน (โมเดลหลัก) แล้วค่อยถอยไป Groq
  * คืน null ถ้าไม่มี provider ไหนตอบ ให้ผู้เรียกใช้ fallback แบบ rule-based
  */
 async function generate(prompt: string): Promise<{ text: string; source: Exclude<TextSource, 'rule-based'> } | null> {
-  const viaGroq = await groqGenerate(prompt);
-  if (viaGroq) return { text: viaGroq, source: 'groq' };
   const viaGemini = await geminiGenerate(prompt);
   if (viaGemini) return { text: viaGemini, source: 'gemini' };
+  const viaGroq = await groqGenerate(prompt);
+  if (viaGroq) return { text: viaGroq, source: 'groq' };
   return null;
 }
 

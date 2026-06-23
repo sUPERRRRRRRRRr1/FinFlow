@@ -21,7 +21,7 @@ export default function WhatIfSimulator({ baseHealth }: { baseHealth: HealthScor
         ? { ...t, amount: t.amount * factor }
         : t,
     );
-    const newHealth = computeHealthScore(modified);
+    const newHealth = computeHealthScore(modified, baseHealth.profile);
     const saved = data.transactions
       .filter((t) => t.category === category && t.direction === 'out' && !t.isTransfer)
       .reduce((a, t) => a + t.amount, 0) * (cut / 100);

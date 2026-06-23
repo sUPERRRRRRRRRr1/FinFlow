@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useDataScope, withScope } from './dataScope';
 
 const BASE = '/api';
 
@@ -27,6 +28,7 @@ export interface AsyncState<T> {
 
 /** hook ดึงข้อมูลจาก API พร้อมสถานะ loading/error/refetch */
 export function useApi<T>(path: string | null, deps: unknown[] = []): AsyncState<T> {
+  const { scope, period, version } = useDataScope();
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,12 +37,12 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): AsyncState
     if (!path) return;
     setLoading(true);
     setError(null);
-    apiGet<T>(path)
+    apiGet<T>(withScope(path, scope, period)) // แนบ scope จริง/เดโม + ช่วงเวลา ให้ทุกหน้าอัตโนมัติ
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, ...deps]);
+  }, [path, scope, period.from, period.to, version, ...deps]);
 
   useEffect(load, [load]);
 

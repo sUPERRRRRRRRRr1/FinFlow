@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Transaction } from '../types.js';
-import { computeHealthScore, WEIGHTS } from './healthScore.js';
+import { computeHealthScore, PROFILES, type ScoreProfile } from './healthScore.js';
 import { levenshtein, stringSimilarity, deduplicate } from './dedup.js';
 import { matchTransfers } from './transfers.js';
 import { buildSankey } from './sankey.js';
@@ -90,7 +90,7 @@ describe('Sankey flow conservation', () => {
   });
 });
 
-describe('Financial Health Score', () => {
+describe('Financial Health Score (4-pillar FinHealth)', () => {
   const txns: Transaction[] = [
     tx({ direction: 'in', category: 'income', amount: 10000, date: '2025-01-01' }),
     tx({ direction: 'out', category: 'food', amount: 2000, date: '2025-01-05' }),
@@ -99,23 +99,58 @@ describe('Financial Health Score', () => {
     tx({ direction: 'out', category: 'bills', amount: 1500, date: '2025-01-25' }),
   ];
 
-  it('savings component is full at exactly 30% savings rate', () => {
-    const h = computeHealthScore(txns); // income 10000, consumption 7000 → s=0.3
-    const savings = h.components.find((c) => c.id === 'savings')!;
-    expect(savings.score).toBeCloseTo(100, 1);
+  const metric = (h: ReturnType<typeof computeHealthScore>, pid: string, mid: string) =>
+    h.pillars.find((p) => p.id === pid)!.metrics.find((m) => m.id === mid)!;
+
+  it('savings-rate metric is full when rate ≥ profile target', () => {
+    const h = computeHealthScore(txns); // income 10000, consumption 7000 → s=0.3 ≥ 0.20
+    expect(metric(h, 'save', 'savingsRate').score).toBeCloseTo(100, 1);
   });
 
-  it('total is 0..100 and equals the weighted sum of components', () => {
+  it('total is 0..100 and equals the weighted sum of pillars', () => {
     const h = computeHealthScore(txns);
     expect(h.total).toBeGreaterThanOrEqual(0);
     expect(h.total).toBeLessThanOrEqual(100);
-    const recombined = h.components.reduce((a, c) => a + c.score * c.weight, 0);
+    const recombined = h.pillars.reduce((a, p) => a + p.score * p.weight, 0);
     expect(h.total).toBeCloseTo(recombined, 0);
   });
 
-  it('weights sum to 1', () => {
-    const total = Object.values(WEIGHTS).reduce((a, b) => a + b, 0);
-    expect(total).toBeCloseTo(1, 6);
+  it('pillar weights sum to 1 in every profile', () => {
+    for (const profile of Object.keys(PROFILES) as ScoreProfile[]) {
+      const h = computeHealthScore(txns, profile);
+      const total = h.pillars.reduce((a, p) => a + p.weight, 0);
+      expect(total).toBeCloseTo(1, 6);
+      expect(h.profile).toBe(profile);
+    }
+  });
+
+  it('student profile rewards a lower savings rate more than adult', () => {
+    // s = (10000-8500)/10000 = 0.15 → adult (full@20%)=75, student (full@10%)=100
+    const lean: Transaction[] = [
+      tx({ direction: 'in', category: 'income', amount: 10000, date: '2025-01-01' }),
+      tx({ direction: 'out', category: 'food', amount: 8500, date: '2025-01-10' }),
+    ];
+    const adult = metric(computeHealthScore(lean, 'adult'), 'save', 'savingsRate').score;
+    const student = metric(computeHealthScore(lean, 'student'), 'save', 'savingsRate').score;
+    expect(student).toBeGreaterThan(adult);
+    expect(student).toBeCloseTo(100, 1);
+  });
+
+  it('borrow pillar drops when debt-like payments appear in transactions', () => {
+    const withDebt: Transaction[] = [
+      ...txns,
+      tx({ direction: 'out', category: 'bills', amount: 3000, counterparty: 'ผ่อนรถ Leasing', date: '2025-01-20' }),
+    ];
+    const base = computeHealthScore(txns).pillars.find((p) => p.id === 'borrow')!.score;
+    const debt = computeHealthScore(withDebt).pillars.find((p) => p.id === 'borrow')!.score;
+    expect(base).toBe(100); // ตรวจไม่พบหนี้
+    expect(debt).toBeLessThan(base);
+  });
+
+  it('grade levels follow the FinHealth 3-band scheme', () => {
+    const h = computeHealthScore(txns);
+    const expected = h.total >= 80 ? 'healthy' : h.total >= 40 ? 'coping' : 'vulnerable';
+    expect(h.level).toBe(expected);
   });
 });
 

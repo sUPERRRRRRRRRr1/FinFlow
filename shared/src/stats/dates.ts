@@ -60,3 +60,26 @@ export function enumerateDays(start: string, end: string): string[] {
 export function weekdayOf(date: string): number {
   return new Date(date + 'T00:00:00Z').getUTCDay();
 }
+
+/** 'YYYY-MM-DD' → วันแรกของเดือนนั้น 'YYYY-MM-01' */
+export function startOfMonth(date: string): string {
+  return date.slice(0, 7) + '-01';
+}
+
+/** 'YYYY-MM-DD' → วันสุดท้ายของเดือนนั้น (รองรับปีอธิกสุรทิน) */
+export function endOfMonth(date: string): string {
+  const [y, m] = date.split('-').map(Number);
+  const last = new Date(Date.UTC(y!, m!, 0)).getUTCDate(); // วันที่ 0 ของเดือนถัดไป = วันสุดท้ายเดือนนี้
+  return `${date.slice(0, 7)}-${String(last).padStart(2, '0')}`;
+}
+
+/** บวก n เดือนให้ 'YYYY-MM-DD' (clamp วันให้อยู่ในเดือนผลลัพธ์ เช่น 31 ม.ค. +1 = 28/29 ก.พ.) */
+export function addMonths(date: string, n: number): string {
+  const [y, m, d] = date.split('-').map(Number);
+  const base = new Date(Date.UTC(y!, m! - 1 + n, 1));
+  const yy = base.getUTCFullYear();
+  const mm = base.getUTCMonth(); // 0-based
+  const lastDay = new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate();
+  const dd = Math.min(d!, lastDay);
+  return `${yy}-${String(mm + 1).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+}

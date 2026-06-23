@@ -1,4 +1,5 @@
 import type { Transaction } from '../types.js';
+import { walletKey } from '../types.js';
 import { CATEGORY_META } from '../categories.js';
 import { round } from './descriptive.js';
 import { isRealIncome } from './timeseries.js';
@@ -70,7 +71,7 @@ function removeCycles(edges: { from: string; to: string; value: number }[]) {
  * ใช้หลัก flow conservation: ทุกกระเป๋าต้องมีเงินเข้า = เงินออก
  * (เติม "คงเหลือ" เมื่อเงินเข้ามากกว่าออก, เติม "ยอดยกมา" เมื่อจ่ายเกินที่เข้า)
  */
-export function buildSankey(txns: Transaction[]): SankeyGraph {
+export function buildSankey(txns: Transaction[], walletLabels: Record<string, string> = {}): SankeyGraph {
   const nodes: SankeyNode[] = [];
   const seen = new Set<string>();
   const addNode = (n: SankeyNode) => {
@@ -79,15 +80,25 @@ export function buildSankey(txns: Transaction[]): SankeyGraph {
       nodes.push(n);
     }
   };
+  // ป้ายกระเป๋า: ใช้ชื่อเล่นที่ผู้ใช้ตั้ง (walletLabels) ก่อน ไม่งั้น fallback ตามชนิดกระเป๋า/คีย์
   const addWallet = (w: string) =>
-    addNode({ id: `wallet:${w}`, label: SOURCE_LABEL[w] ?? w, type: 'wallet', color: WALLET_COLOR });
+    addNode({ id: `wallet:${w}`, label: walletLabels[w] ?? SOURCE_LABEL[w] ?? w, type: 'wallet', color: WALLET_COLOR });
   const links: SankeyLink[] = [];
   const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v);
 
   // 1) รายรับ แยกตามผู้จ่าย+กระเป๋าที่รับ
-  const incomeByNameWallet = new Map<string, number>();
+  const incomeRaw = new Map<string, number>();
   for (const t of txns) {
-    if (isRealIncome(t)) add(incomeByNameWallet, `${t.counterparty}${SEP}${t.source}`, t.amount);
+    if (isRealIncome(t)) add(incomeRaw, `${t.counterparty}${SEP}${walletKey(t)}`, t.amount);
+  }
+  // ยุบผู้โอนเข้ารายย่อย (< 4% ของรายรับรวม) เป็น "รับโอนอื่นๆ" ต่อกระเป๋า
+  // เพื่อไม่ให้ฝั่งซ้ายมีโนดผู้โอนหลายสิบคน (เช่น statement ย้อนหลังทั้งปี) จนรก
+  const incomeGrand = [...incomeRaw.values()].reduce((a, b) => a + b, 0);
+  const incomeByNameWallet = new Map<string, number>();
+  for (const [key, amt] of incomeRaw) {
+    const [, wallet] = key.split(SEP);
+    const k = amt < incomeGrand * 0.04 ? `รับโอนอื่นๆ${SEP}${wallet}` : key;
+    add(incomeByNameWallet, k, amt);
   }
 
   // 2) การโอนข้ามกระเป๋า: รวมเป็น from→to แล้ว net + ตัดวงจร
@@ -96,10 +107,10 @@ export function buildSankey(txns: Transaction[]): SankeyGraph {
     if (!t.isTransfer || !t.transferGroup) continue;
     const g = groups.get(t.transferGroup) ?? { amount: 0 };
     if (t.direction === 'out') {
-      g.from = t.source;
+      g.from = walletKey(t);
       g.amount = t.amount;
     } else {
-      g.to = t.source;
+      g.to = walletKey(t);
     }
     groups.set(t.transferGroup, g);
   }
@@ -127,8 +138,8 @@ export function buildSankey(txns: Transaction[]): SankeyGraph {
   const savingsByWallet = new Map<string, number>();
   for (const t of txns) {
     if (t.direction !== 'out' || t.isTransfer) continue;
-    if (t.category === 'savings') add(savingsByWallet, t.source, t.amount);
-    else add(expWalletCat, `${t.source}${SEP}${t.category}`, t.amount);
+    if (t.category === 'savings') add(savingsByWallet, walletKey(t), t.amount);
+    else add(expWalletCat, `${walletKey(t)}${SEP}${t.category}`, t.amount);
   }
 
   // ยุบหมวดเล็ก (< 4% ของรายจ่ายรวม) รวมเป็น 'other' เพื่อลดเส้นบางๆ ที่ทำให้ Sankey รก

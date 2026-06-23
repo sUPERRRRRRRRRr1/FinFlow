@@ -12,6 +12,10 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg'],
+      workbox: {
+        // อย่าให้ SW เสิร์ฟ app shell แทน /api/* (ไม่งั้น OAuth/CSV/callback โดนกลืน → หน้าว่าง)
+        navigateFallbackDenylist: [/^\/api\//],
+      },
       manifest: {
         name: 'FinFlow — เส้นทางการเงินส่วนบุคคล',
         short_name: 'FinFlow',

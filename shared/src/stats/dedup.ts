@@ -27,19 +27,31 @@ export function levenshtein(a: string, b: string): number {
   return prev[n]!;
 }
 
-/** ความคล้ายของสตริง 0..1 = 1 - dist/maxLen (normalized Levenshtein) */
+/** ความคล้ายของสตริง 0..1 = 1 - dist/maxLen (normalized Levenshtein)
+ *  บวกคะแนนพิเศษ: ถ้าสตริงสั้นกว่า (≥8 ตัว) เป็น prefix ของสตริงยาวกว่า
+ *  → รองรับชื่อที่ถูกตัดทอนใน KBank STM (~20 ตัว) กับชื่อเต็มใน OCR สลิป
+ */
 export function stringSimilarity(a: string, b: string): number {
   const s1 = normalize(a);
   const s2 = normalize(b);
   if (!s1 && !s2) return 1;
   const maxLen = Math.max(s1.length, s2.length);
   if (maxLen === 0) return 1;
-  return 1 - levenshtein(s1, s2) / maxLen;
+  const base = 1 - levenshtein(s1, s2) / maxLen;
+  // ชื่อถูกตัดทอน: สตริงสั้น (≥8 ตัว) เป็น prefix ของสตริงยาว → ถือว่าเหมือนกัน
+  const [shorter, longer] = s1.length <= s2.length ? [s1, s2] : [s2, s1];
+  if (shorter.length >= 8 && longer.startsWith(shorter)) return Math.max(base, 0.88);
+  return base;
 }
 
 function normalize(s: string): string {
   return (s || '')
     .toLowerCase()
+    // ตัดชื่อธนาคารนำหน้าที่ slip แสดงชื่อเจ้าของบัญชีล้วนๆ แต่ STM ขึ้นต้นด้วย "SCB นาย..."
+    .replace(/^(scb|gsb|kbank|bbl|krungthai|bay|ttb|uob|cimb|lhbank|kkp|tbank)\s+/u, '')
+    // ตัดคำนำหน้าชื่อบุคคล: สลิปมักมี "นาย/นางสาว ..." แต่ STM ตัดทิ้ง — ตัดทั้งคู่ให้เทียบชื่อตรงกัน
+    // (normalize สมมาตรกับทั้งสองสตริง การตัดเกินจึงไม่ทำให้คู่ที่ควรแมตช์หลุด)
+    .replace(/^(นางสาว|นาง|นาย|น\.?ส\.?|ด\.?ช\.?|ด\.?ญ\.?|mr|mrs|ms|miss)\.?\s*/iu, '')
     .replace(/\s+/g, '')
     .replace(/[*x#]+\d+/g, '') // ตัดเลขบัญชีที่ถูกปิดบัง
     .trim();
@@ -85,7 +97,17 @@ export function deduplicate(
       const k = kept[i]!;
       if (k.direction !== t.direction) continue;
       if (Math.abs(k.amount - t.amount) > amountTol) continue;
-      if (Math.abs(diffDays(k.date, t.date)) > dayWindow) continue;
+      const sameBucket = k.source === t.source && (k.account ?? '') === (t.account ?? '');
+      if (sameBucket) {
+        // รายการจากแหล่ง+บัญชีเดียวกัน: ต้องวันที่ตรงกันพอดี (ไม่ขยาย dayWindow)
+        // ถ้าทั้งคู่มีเวลาด้วย ต้องตรงกัน — ป้องกัน "45฿ DIGITAL SCHOOL 10:59" กับ "45฿ DIGITAL SCHOOL 11:27"
+        // ถูก dedup ทั้งที่เป็นคนละรายการในวันเดียวกัน
+        if (k.date !== t.date) continue;
+        if (k.time && t.time && k.time !== t.time) continue;
+      } else {
+        // ข้ามแหล่ง: อนุญาต dayWindow=1 วัน (รองรับ posted date vs value date ต่างกัน 1 วัน)
+        if (Math.abs(diffDays(k.date, t.date)) > dayWindow) continue;
+      }
       const sim = stringSimilarity(k.counterparty, t.counterparty);
       if (sim >= threshold && sim > matchedSim) {
         matchedIndex = i;
@@ -97,8 +119,14 @@ export function deduplicate(
       const existing = kept[matchedIndex]!;
       const existingRank = sourceRank[existing.source] ?? 0;
       const newRank = sourceRank[t.source] ?? 0;
-      // เก็บตัวที่แหล่งน่าเชื่อถือกว่า (หรือมียอดคงเหลือ/เวลา)
-      if (newRank > existingRank || (newRank === existingRank && !existing.balanceAfter && t.balanceAfter)) {
+      // เก็บตัวที่ดีกว่า ตามลำดับ: แหล่งน่าเชื่อถือกว่า → มีเลขบัญชี (STM ระบุบัญชีได้) → มียอดคงเหลือ
+      // "มีเลขบัญชีชนะไม่มี" สำคัญ: รายการจาก STM (มี account) ต้องแทนรายการจากเนื้อเมล (ไม่มี) ไม่งั้นแยกบัญชีไม่ติด
+      const equalRank = newRank === existingRank;
+      const takeNew =
+        newRank > existingRank ||
+        (equalRank && !existing.account && !!t.account) ||
+        (equalRank && !!existing.account === !!t.account && !existing.balanceAfter && !!t.balanceAfter);
+      if (takeNew) {
         kept[matchedIndex] = t;
         duplicates.push({ kept: t.id, removed: existing.id, similarity: matchedSim });
       } else {

@@ -26,13 +26,18 @@ export default function Dashboard() {
         {(o) => (
           <div className="grid" style={{ gap: 18 }}>
             {/* แถวสถิติหลัก */}
-            <div className="grid cols-4">
+            <div className="grid cols-5">
               <Stat label="รายรับรวม" value={thb(o.totals.income)} sub={<span className="muted">{o.count} รายการ</span>} />
               <Stat label="รายจ่ายรวม" value={thb(o.totals.expense)} sub={<span className="muted">ไม่รวมการโอนระหว่างกระเป๋า</span>} />
               <Stat
-                label="คงเหลือ/ออมสุทธิ"
+                label="กันเข้าออม"
+                value={<span className="down">{thb(o.totals.savings)}</span>}
+                sub={<span className="muted">เงินที่โอนเข้าบัญชีออม (ไม่นับเป็นรายจ่าย)</span>}
+              />
+              <Stat
+                label="ออมสุทธิ (สะสม)"
                 value={<span className={o.totals.net >= 0 ? 'down' : 'up'}>{thb(o.totals.net)}</span>}
-                sub={<span className="muted">ออม {thb(o.totals.savings)}</span>}
+                sub={<span className="muted">รายรับ−รายจ่ายสะสม · ไม่ใช่ยอดในบัญชี (ดูยอดจริงด้านล่าง)</span>}
               />
               <Stat
                 label="อัตราการออม"
@@ -47,7 +52,7 @@ export default function Dashboard() {
 
             {/* คะแนนสุขภาพ + insight */}
             <div className="grid cols-2">
-              <HealthScoreGauge health={o.health} />
+              <HealthScoreGauge health={o.health} onProfileChange={state.refetch} />
               <div className="grid" style={{ gap: 18, alignContent: 'start' }}>
                 <InsightFeed insights={o.insights} />
                 <AdviceCard />
@@ -90,8 +95,14 @@ export default function Dashboard() {
               </div>
 
               <div className="card">
-                <h3>แยกตามกระเป๋า</h3>
-                <div className="sub">รวมศูนย์ข้ามแอป (KBank · Make · TrueMoney)</div>
+                <h3>แยกตามบัญชี</h3>
+                <div className="sub">ยอดเงินคงเหลือจริง + เงินเข้า/ออก แต่ละบัญชี (รวมศูนย์ KBank · TrueMoney)</div>
+                {o.totals.totalBalance > 0 && (
+                  <div className="row between" style={{ padding: '10px 0', borderBottom: '2px solid var(--border)' }}>
+                    <b>💰 ยอดเงินรวมทุกบัญชี</b>
+                    <b style={{ fontSize: 17 }}>{thb(o.totals.totalBalance)}</b>
+                  </div>
+                )}
                 {o.bySource.map((s) => (
                   <div key={s.source} className="row between" style={{ padding: '9px 0', borderTop: '1px solid var(--border)' }}>
                     <div>
@@ -99,8 +110,16 @@ export default function Dashboard() {
                       <div className="muted" style={{ fontSize: 12 }}>{s.count} รายการ</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div className="down" style={{ fontSize: 13 }}>เข้า {thb(s.income)}</div>
-                      <div className="up" style={{ fontSize: 13 }}>ออก {thb(s.expense)}</div>
+                      {s.balance != null ? (
+                        <div style={{ fontWeight: 700, fontSize: 15 }}>{thb(s.balance)}</div>
+                      ) : (
+                        <div className="muted" style={{ fontSize: 12 }}>ยอดคงเหลือ — n/a</div>
+                      )}
+                      <div style={{ fontSize: 11.5, marginTop: 2 }}>
+                        <span className="down">เข้า {thb(s.income)}</span>
+                        <span className="muted"> · </span>
+                        <span className="up">ออก {thb(s.expense)}</span>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -183,7 +202,7 @@ function AdviceCard() {
         <>
           <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, marginTop: 10 }}>{advice.text}</div>
           <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
-            ที่มา: {advice.source === 'gemini' ? 'Google Gemini' : 'ระบบ rule-based (ใส่ GEMINI_API_KEY เพื่อใช้ AI จริง)'}
+            ที่มา: {advice.source === 'groq' ? 'Groq' : advice.source === 'gemini' ? 'Google Gemini' : 'ระบบ rule-based (ใส่ GROQ_API_KEY หรือ GEMINI_API_KEY เพื่อใช้ AI จริง)'}
           </div>
         </>
       ) : (
