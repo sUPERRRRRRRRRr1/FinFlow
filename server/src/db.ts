@@ -172,6 +172,11 @@ export function clearTransactions(): void {
   db.exec('DELETE FROM transactions');
 }
 
+/** ลบเฉพาะรายการตัวอย่าง (demo) — ไม่แตะข้อมูลจริง ใช้ตอนโหลด/รีโหลดชุดเดโมควบคู่ข้อมูลจริง */
+export function clearDemoTransactions(): void {
+  db.exec('DELETE FROM transactions WHERE demo = 1');
+}
+
 export function updateCategory(id: string, category: CategoryId): void {
   // แก้หมวดเองถือเป็น baseline ใหม่ (ตั้ง auto_category ด้วย เพื่อให้ลบกฒแล้วกลับมาที่ค่านี้)
   db.prepare('UPDATE transactions SET category = ?, auto_category = ? WHERE id = ?').run(category, category, id);
