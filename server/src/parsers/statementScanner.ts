@@ -1,5 +1,5 @@
 import type { Source, Transaction } from '@finflow/shared';
-import { makeTxn, parseThaiDate, parseTime, guessDirection } from './common.js';
+import { makeTxn, parseThaiDate, parseTime, guessDirection, extractAccountNo } from './common.js';
 
 const MONEY_RE = /([+-]?)(\d{1,3}(?:,\d{3})*(?:\.\d{2})|\d+\.\d{2})/g;
 
@@ -16,6 +16,8 @@ const MONEY_RE = /([+-]?)(\d{1,3}(?:,\d{3})*(?:\.\d{2})|\d+\.\d{2})/g;
 export function scanStatement(text: string, source: Source): Transaction[] {
   const out: Transaction[] = [];
   const lines = text.split(/\r?\n/);
+  // เลขบัญชีจากหัว statement (ถ้ามี) — แยกหลายบัญชีในแบงก์เดียวกัน
+  const account = extractAccountNo(text);
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -43,6 +45,10 @@ export function scanStatement(text: string, source: Source): Transaction[] {
     for (const t of tokens) desc = desc.replace(t.raw, '');
     desc = desc.replace(/\s{2,}/g, ' ').trim();
 
+    // กันข้อความที่ไม่ใช่รายการ (เงื่อนไข/หัวกระดาษ/ข้อกำหนด) ที่บังเอิญมีวันที่+ตัวเลข
+    // ชื่อร้าน/ผู้รับจริงสั้น (สูงสุดที่พบจริง ~100) — เผื่อขั้นต่ำ 120 ให้ตรงกับ ingest filter กันตัดของจริง
+    if (desc.length > 120) continue;
+
     const direction =
       amountTok.sign === '-'
         ? 'out'
@@ -58,6 +64,7 @@ export function scanStatement(text: string, source: Source): Transaction[] {
         direction,
         counterparty: desc,
         source,
+        account,
         balanceAfter: balanceTok?.value,
         rawDesc: trimmed,
       }),

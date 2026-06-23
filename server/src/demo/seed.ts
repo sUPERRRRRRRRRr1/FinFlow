@@ -1,5 +1,26 @@
-import type { CategoryId, Source, Transaction } from '@finflow/shared';
+import type { AccountConfig, CategoryId, Source, Transaction } from '@finflow/shared';
 import { enumerateDays, weekdayOf } from '@finflow/shared';
+
+/** คีย์บัญชีเดโมของ KBank (ใช้แยก 2 เล่ม: ใช้จ่ายหลัก vs เงินเก็บ) — ใช้คีย์สมมติ ไม่ใช่เลขบัญชีจริง */
+const KBANK_MAIN = 'kbank-main';
+const KBANK_SAVINGS = 'kbank-savings';
+
+/**
+ * การตั้งค่าบัญชีเริ่มต้นของชุดเดโม — ให้ผู้ใช้/กรรมการเห็นการแยกบัญชีทันที
+ * (ของจริงผู้ใช้ตั้งเองในหน้า "เชื่อมต่อข้อมูล" → การ์ดบัญชีของฉัน)
+ */
+export const DEMO_ACCOUNTS: AccountConfig[] = [
+  { id: KBANK_MAIN, source: 'kbank', nickname: 'ใช้จ่ายหลัก', kind: 'daily' },
+  { id: KBANK_SAVINGS, source: 'kbank', nickname: 'เงินเก็บ', kind: 'savings' },
+  { id: 'truemoney', source: 'truemoney', nickname: 'TrueMoney', kind: 'wallet' },
+  { id: 'make', source: 'make', nickname: 'Make by KBank', kind: 'savings' },
+];
+
+/** รวมบัญชีเดโมเข้ากับที่ผู้ใช้ตั้งไว้ โดยไม่ทับชื่อเล่นที่ผู้ใช้กำหนดเอง (เติมเฉพาะคีย์ที่ยังไม่มี) */
+export function mergeDemoAccounts(existing: AccountConfig[]): AccountConfig[] {
+  const ids = new Set(existing.map((a) => a.id));
+  return [...existing, ...DEMO_ACCOUNTS.filter((a) => !ids.has(a.id))];
+}
 
 /** PRNG แบบ deterministic (mulberry32) เพื่อให้ข้อมูลเดโมคงที่ทุกครั้ง */
 function mulberry32(seed: number) {
@@ -40,10 +61,12 @@ function mk(p: {
   category: CategoryId;
   time?: string;
   balanceAfter?: number;
+  account?: string;
 }): Transaction {
   return {
     id: `seed-${(counter++).toString().padStart(5, '0')}`,
     rawDesc: p.counterparty,
+    demo: true,
     time: p.time ?? `${String(Math.floor(rand(7, 22))).padStart(2, '0')}:${String(Math.floor(rand(0, 60))).padStart(2, '0')}`,
     ...p,
   };
@@ -109,8 +132,14 @@ export function generateDemoTransactions(): Transaction[] {
     if (chance(0.7)) {
       const d = `${m}-${String(Math.floor(rand(2, 10))).padStart(2, '0')}`;
       const amt = baht(2000, 4000, 500);
-      txns.push(mk({ date: d, amount: amt, direction: 'out', counterparty: 'โอนเข้า Make by KBank', source: 'kbank', category: 'transfer' }));
+      txns.push(mk({ date: d, amount: amt, direction: 'out', counterparty: 'โอนเข้า Make by KBank', source: 'kbank', account: KBANK_MAIN, category: 'transfer' }));
       txns.push(mk({ date: d, amount: amt, direction: 'in', counterparty: 'รับโอนจาก KBank', source: 'make', category: 'income' }));
+    }
+    // ── ออมเข้า "บัญชีเงินเก็บ KBank" หลังเงินเดือนเข้า (โอนข้ามบัญชีในแบงก์เดียวกัน — โชว์การแยกบัญชี) ──
+    {
+      const amt = baht(4500, 7000, 500); // ช่วงไม่ทับกับการโอนเข้า Make/TrueMoney เพื่อให้จับคู่โอนถูกคู่
+      txns.push(mk({ date: `${m}-26`, amount: amt, direction: 'out', counterparty: 'โอนเข้าบัญชีเงินเก็บ', source: 'kbank', account: KBANK_MAIN, category: 'transfer' }));
+      txns.push(mk({ date: `${m}-26`, amount: amt, direction: 'in', counterparty: 'รับโอนจากบัญชีหลัก', source: 'kbank', account: KBANK_SAVINGS, category: 'income' }));
     }
 
     // ── รายจ่ายประจำวัน ──
@@ -156,6 +185,12 @@ export function generateDemoTransactions(): Transaction[] {
     }
   }
 
+  // ── เงินได้จากการลงทุน (โชว์ฟีเจอร์ภาษี: ดอกเบี้ย/เงินปันผล + ภาษีหัก ณ ที่จ่าย) ──
+  // ดอกเบี้ยเงินฝาก → เงินได้ ม.40(4) ถูกหัก ณ ที่จ่าย 15% · เงินปันผล → ม.40(4) หัก 10%
+  txns.push(mk({ date: '2025-12-30', amount: 1250, direction: 'in', counterparty: 'ดอกเบี้ยเงินฝากออมทรัพย์ KBank', source: 'kbank', account: KBANK_SAVINGS, category: 'income' }));
+  txns.push(mk({ date: '2026-04-28', amount: 6200, direction: 'in', counterparty: 'เงินปันผลหุ้น SET', source: 'kbank', category: 'income' }));
+  txns.push(mk({ date: '2026-05-20', amount: 3100, direction: 'in', counterparty: 'เงินปันผลกองทุนรวม', source: 'kbank', category: 'income' }));
+
   // ── รายจ่ายผิดปกติ: ซื้อมือถือใหม่ มี.ค. 2569 (outlier + shopping spike) ──
   txns.push(mk({ date: '2026-03-15', amount: 32900, direction: 'out', counterparty: 'Power Buy (iPhone)', source: 'kbank', category: 'shopping', time: '14:22' }));
 
@@ -168,8 +203,10 @@ export function generateDemoTransactions(): Transaction[] {
   }
 
   // แนบเลขบัญชีให้ทุกรายการ (ร้านเดียวกัน = บัญชีเดียวกัน) สำหรับคอลัมน์ผู้รับ + การตั้งกฎด้วยบัญชี
+  // และให้รายการ KBank ที่ยังไม่ระบุบัญชี เป็น "บัญชีใช้จ่ายหลัก" (เงินเก็บถูกระบุไว้แล้วตอนสร้าง)
   for (const t of txns) {
     if (!t.accountRef) t.accountRef = acct(t.counterparty);
+    if (t.source === 'kbank' && !t.account) t.account = KBANK_MAIN;
   }
 
   return txns;

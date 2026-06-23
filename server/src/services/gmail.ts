@@ -8,6 +8,7 @@ import { config, flags } from '../config.js';
 import { parseStatement } from '../parsers/registry.js';
 import { parseSlip } from '../parsers/slip.js';
 import { ocrSlip } from './ocr.js';
+import { extractPdfText } from './pdf.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN_PATH = path.resolve(__dirname, '..', '..', 'data', 'tokens.json');
@@ -107,6 +108,46 @@ async function imageAttachments(
   return out;
 }
 
+/** เก็บ PDF statement ที่ใส่รหัส (K-eDocument: ไฟล์ STM_SA*.pdf) — ข้ามเอกสารทั่วไป */
+async function statementPdfs(
+  gmail: ReturnType<typeof google.gmail>,
+  messageId: string,
+  payload: any,
+): Promise<Buffer[]> {
+  const parts: any[] = [];
+  const collect = (p: any) => {
+    if (!p) return;
+    // รับเฉพาะไฟล์ statement จริง (ชื่อขึ้นต้น STM_ เช่น STM_SA*, STM_TMN*) — กันไฟล์แนบอื่น
+    // (เช่น channel_bankuse.pdf, เอกสารข้อกำหนด/เงื่อนไข) ถูก parse เป็นรายการขยะ
+    if (p.mimeType === 'application/pdf' && /^STM_/i.test(p.filename ?? '')) parts.push(p);
+    if (p.parts) p.parts.forEach(collect);
+  };
+  collect(payload);
+
+  const out: Buffer[] = [];
+  for (const p of parts) {
+    let raw = p.body?.data as string | undefined;
+    if (!raw && p.body?.attachmentId) {
+      const att = await gmail.users.messages.attachments.get({ userId: 'me', messageId, id: p.body.attachmentId });
+      raw = att.data.data ?? undefined;
+    }
+    if (raw) out.push(Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64'));
+  }
+  return out;
+}
+
+/**
+ * ปลดล็อก + ดึงข้อความจาก PDF โดยลองหลายรหัส (รหัส STM ที่ผู้ใช้บันทึกไว้ส่งมาจาก client)
+ * ลองไม่ใส่รหัสก่อน แล้วไล่รหัสที่ให้มา — ใช้ตัวแรกที่อ่านได้ (รหัสใช้ชั่วคราว ไม่เก็บลง DB)
+ */
+async function extractPdfWithPasswords(buf: Buffer, passwords: string[]): Promise<string | null> {
+  for (const pw of ['', ...passwords]) {
+    const text = await extractPdfText(buf, pw);
+    if (text && text.trim()) return text;
+  }
+  return null;
+}
+
 /**
  * ดึงเมลธนาคาร/กระเป๋าเงิน (+ป้ายสลิปที่ผู้ใช้ตั้ง) ย้อนหลัง แล้วแปลงเป็นรายการ
  * 3 ทาง ต่อ 1 เมล:
@@ -116,7 +157,11 @@ async function imageAttachments(
  * ความเป็นส่วนตัว: กรองเฉพาะผู้ส่ง allow-list หรือป้ายที่ผู้ใช้กำหนด ไม่แตะเมลอื่น
  * หมายเหตุ: statement PDF ใส่รหัส → ปลดล็อคฝั่ง client แล้วอัปโหลดข้อความแทน
  */
-export async function fetchBankTransactions(maxResults = 100): Promise<Transaction[]> {
+export async function fetchBankTransactions(
+  maxResults = 250,
+  windowExpr = 'newer_than:13m',
+  pdfPasswords: string[] = [],
+): Promise<Transaction[]> {
   if (!flags.gmailConfigured) throw new Error('ยังไม่ได้ตั้งค่า Gmail OAuth (ดู .env.example)');
   if (!isConnected()) throw new Error('ยังไม่ได้เชื่อมต่อ Gmail (เรียก /api/auth/google ก่อน)');
 
@@ -127,7 +172,7 @@ export async function fetchBankTransactions(maxResults = 100): Promise<Transacti
     : `(${fromQuery})`;
   const list = await gmail.users.messages.list({
     userId: 'me',
-    q: `${scope} newer_than:6m`,
+    q: `${scope} ${windowExpr}`,
     maxResults,
   });
 
@@ -159,6 +204,16 @@ export async function fetchBankTransactions(maxResults = 100): Promise<Transacti
         const slip = parseSlip(ocr.text);
         if (slip) out.push(slip);
       }
+    }
+
+    // (4) PDF รายการเดินบัญชี (ใส่รหัส) → ลองรหัสที่ผู้ใช้บันทึกไว้ → แยกทุกรายการ
+    const pdfs = await statementPdfs(gmail, msg.id, payload);
+    for (const buf of pdfs) {
+      const pdfText = await extractPdfWithPasswords(buf, pdfPasswords);
+      if (!pdfText) continue;
+      // ให้ registry เลือก parser (KBank STM → parseSavingsStatement, TrueMoney STM/อื่นๆ ตามผู้ส่ง/เนื้อหา)
+      // ทางเดียวกับการอัปโหลดเอง เพื่อไม่ให้ผลลัพธ์ต่างกันระหว่าง 2 ช่องทาง
+      out.push(...parseStatement(pdfText, { sender, filename: subject }).transactions);
     }
   }
   return out;

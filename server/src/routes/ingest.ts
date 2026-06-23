@@ -1,18 +1,19 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { clearTransactions } from '../db.js';
+import { clearTransactions, clearDemoTransactions, getAccounts, setAccounts, insertTransactions } from '../db.js';
 import { parseStatement } from '../parsers/registry.js';
 import { parseSlip } from '../parsers/slip.js';
 import { ocrSlip } from '../services/ocr.js';
 import { fetchBankTransactions } from '../services/gmail.js';
-import { generateDemoTransactions } from '../demo/seed.js';
+import { generateDemoTransactions, mergeDemoAccounts } from '../demo/seed.js';
 import { ingestAndStore } from '../services/store.js';
+import { ingestTransactions } from '../services/ingest.js';
 import { flags } from '../config.js';
 
 export const ingestRouter = Router();
 
 /** POST /api/ingest/statement { text, sender?, filename? } — ข้อความ statement (ปลดรหัสฝั่ง client แล้ว) */
-ingestRouter.post('/statement', (req, res) => {
+ingestRouter.post('/statement', async (req, res) => {
   const schema = z.object({ text: z.string().min(1), sender: z.string().optional(), filename: z.string().optional() });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'ต้องส่งข้อความ statement' });
@@ -22,7 +23,7 @@ ingestRouter.post('/statement', (req, res) => {
   });
   if (transactions.length === 0)
     return res.status(422).json({ error: 'ไม่พบรายการใน statement (ตรวจรูปแบบข้อความ)' });
-  res.json({ source, ...ingestAndStore(transactions) });
+  res.json({ source, ...(await ingestAndStore(transactions)) });
 });
 
 /** POST /api/ingest/slip { ocrText? , imageBase64?, mimeType? } — สลิป */
@@ -45,24 +46,48 @@ ingestRouter.post('/slip', async (req, res) => {
 
   const txn = parseSlip(text);
   if (!txn) return res.status(422).json({ error: 'อ่านสลิปไม่สำเร็จ' });
-  res.json({ parsed: txn, ...ingestAndStore([txn]) });
+  res.json({ parsed: txn, ...(await ingestAndStore([txn])) });
 });
 
 /** POST /api/ingest/gmail — ดึงเมลธนาคารจริง (ต้องตั้งค่า + เชื่อม Gmail) */
-ingestRouter.post('/gmail', async (_req, res) => {
+let gmailBusy = false; // กันดึง Gmail ซ้อนกัน (auto-sync + กดเอง พร้อมกัน) ไม่ให้ ingest ชนกัน
+ingestRouter.post('/gmail', async (req, res) => {
   if (!flags.gmailConfigured)
     return res.status(503).json({ error: 'ยังไม่ได้ตั้งค่า Gmail OAuth ใน .env (โหมดเดโมไม่ต้องใช้)' });
+  if (gmailBusy) return res.json({ added: 0, busy: true });
+  gmailBusy = true;
   try {
-    const txns = await fetchBankTransactions();
-    res.json(ingestAndStore(txns));
+    // รหัส STM ที่ client บันทึกไว้ (localStorage) ส่งมาเพื่อปลดล็อก PDF อัตโนมัติ — ใช้ชั่วคราว ไม่เก็บลง DB
+    const pdfPasswords = z.array(z.string()).safeParse(req.body?.passwords).data ?? [];
+    // ?recent=1 → ดึงเฉพาะ 21 วันล่าสุด (เร็ว ใช้ auto-sync ตอนเข้าเว็บ) · ไม่ใส่ = ทั้งปี (ปุ่มดึงเอง)
+    const recent = req.query.recent === '1';
+    const txns = await fetchBankTransactions(recent ? 100 : 250, recent ? 'newer_than:21d' : 'newer_than:13m', pdfPasswords);
+    res.json(await ingestAndStore(txns));
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
+  } finally {
+    gmailBusy = false;
   }
 });
 
-/** POST /api/ingest/demo — สร้าง/รีเซ็ตข้อมูลตัวอย่าง */
-ingestRouter.post('/demo', (_req, res) => {
+/** POST /api/ingest/demo — สร้าง/รีเซ็ตข้อมูลตัวอย่าง (ลบข้อมูลเดิมทั้งหมดก่อน) */
+ingestRouter.post('/demo', async (_req, res) => {
   clearTransactions();
-  const result = ingestAndStore(generateDemoTransactions());
+  const result = await ingestAndStore(generateDemoTransactions());
+  // เติมการตั้งค่าบัญชีเดโมให้ครบ (ไม่ทับชื่อเล่นที่ผู้ใช้ตั้งเอง)
+  setAccounts(mergeDemoAccounts(getAccounts()));
   res.json({ ok: true, ...result });
+});
+
+/**
+ * POST /api/ingest/demo/add — เพิ่มข้อมูลตัวอย่าง "ควบคู่" ข้อมูลจริง (ไม่ลบของจริง)
+ * ลบเฉพาะ demo เดิมก่อน (idempotent) แล้ว ingest ชุดเดโมแยกเดี่ยว (จับคู่โอน/กันซ้ำภายในชุด)
+ * → insert เพิ่มโดยไม่แตะข้อมูลจริง ดูได้ผ่านสกอป "🧪 เดโม"
+ */
+ingestRouter.post('/demo/add', (_req, res) => {
+  clearDemoTransactions();
+  const { transactions, stats } = ingestTransactions(generateDemoTransactions());
+  const added = insertTransactions(transactions);
+  setAccounts(mergeDemoAccounts(getAccounts()));
+  res.json({ ok: true, added, stats });
 });

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ALL_CATEGORIES, CATEGORY_META, displayName, monthKey, thaiMonthLabel } from '@finflow/shared';
+import { ALL_CATEGORIES, CATEGORY_META, displayName, monthKey, thaiMonthLabel, walletKey } from '@finflow/shared';
 import type { CategoryId, MerchantRule, Transaction } from '@finflow/shared';
 import { useApi, apiSend } from '../lib/api';
+import type { AccountsResponse } from '../lib/types';
 import { PageHead, Async } from '../components/ui';
 import { thb } from '../lib/format';
 
@@ -16,6 +17,7 @@ const SOURCE_LABEL: Record<string, string> = {
 export default function Transactions() {
   const state = useApi<{ transactions: Transaction[] }>('/transactions');
   const rulesState = useApi<{ rules: MerchantRule[] }>('/rules');
+  const accountsState = useApi<AccountsResponse>('/accounts');
   const [rows, setRows] = useState<Transaction[]>([]);
   const [month, setMonth] = useState('all');
   const [source, setSource] = useState('all');
@@ -38,13 +40,28 @@ export default function Transactions() {
     rulesState.refetch();
   };
 
+  // ป้ายกระเป๋า/บัญชี: ใช้ชื่อเล่นที่ผู้ใช้ตั้งไว้ (แยกหลายบัญชีในแบงก์เดียวกัน)
+  const walletLabel = useMemo(() => {
+    const byId = new Map((accountsState.data?.accounts ?? []).map((a) => [a.id, a]));
+    return (t: Transaction) => {
+      const key = walletKey(t);
+      const base = SOURCE_LABEL[t.source] ?? t.source;
+      const nn = byId.get(key)?.nickname;
+      return nn ? `${base} · ${nn}` : key === t.source ? base : `${base} · ${key}`;
+    };
+  }, [accountsState.data]);
+
   const months = useMemo(() => [...new Set(rows.map((t) => monthKey(t.date)))].sort().reverse(), [rows]);
-  const sources = useMemo(() => [...new Set(rows.map((t) => t.source))], [rows]);
+  const wallets = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of rows) m.set(walletKey(t), walletLabel(t));
+    return [...m.entries()];
+  }, [rows, walletLabel]);
 
   const filtered = useMemo(() => {
     return rows
       .filter((t) => (month === 'all' ? true : monthKey(t.date) === month))
-      .filter((t) => (source === 'all' ? true : t.source === source))
+      .filter((t) => (source === 'all' ? true : walletKey(t) === source))
       .filter((t) => (category === 'all' ? true : t.category === category))
       .filter((t) =>
         q ? (displayName(t) + t.counterparty + (t.accountRef ?? '')).toLowerCase().includes(q.toLowerCase()) : true,
@@ -135,7 +152,7 @@ export default function Transactions() {
                 </select>
                 <select value={source} onChange={(e) => setSource(e.target.value)} style={inputStyle()}>
                   <option value="all">ทุกกระเป๋า</option>
-                  {sources.map((s) => <option key={s} value={s}>{SOURCE_LABEL[s] ?? s}</option>)}
+                  {wallets.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                 </select>
                 <select value={category} onChange={(e) => setCategory(e.target.value)} style={inputStyle()}>
                   <option value="all">ทุกหมวด</option>
@@ -189,7 +206,7 @@ export default function Transactions() {
                           {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_META[c].icon} {CATEGORY_META[c].label}</option>)}
                         </select>
                       </td>
-                      <td className="muted">{SOURCE_LABEL[t.source] ?? t.source}</td>
+                      <td className="muted">{walletLabel(t)}</td>
                       <td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
                         <span className={t.direction === 'in' ? 'down' : 'up'}>
                           {t.direction === 'in' ? '+' : '−'}{thb(t.amount)}

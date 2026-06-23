@@ -1,4 +1,6 @@
 import type { Granularity, Transaction } from '@finflow/shared';
+import { walletKey } from '@finflow/shared';
+import { getAccounts, getScoreProfile } from '../db.js';
 import {
   CATEGORY_META,
   aggregate,
@@ -30,6 +32,23 @@ const SOURCE_LABEL: Record<string, string> = {
   slip: 'สลิป',
 };
 
+/**
+ * แผนที่ "คีย์กระเป๋า → ป้ายแสดงผล" จากการตั้งค่าบัญชีของผู้ใช้
+ * บัญชีที่ตั้งชื่อเล่นไว้ → 'KBank · ใช้จ่ายหลัก' / บัญชีที่ยังไม่ตั้ง → ป้ายตามชนิดกระเป๋า (+ เลขบัญชีถ้ามี)
+ */
+function walletLabelMap(txns: Transaction[]): Record<string, string> {
+  const cfgById = new Map(getAccounts().map((c) => [c.id, c]));
+  const keyToSource = new Map<string, string>();
+  for (const t of txns) keyToSource.set(walletKey(t), t.source);
+  const map: Record<string, string> = {};
+  for (const [key, src] of keyToSource) {
+    const base = SOURCE_LABEL[src] ?? src;
+    const nickname = cfgById.get(key)?.nickname;
+    map[key] = nickname ? `${base} · ${nickname}` : key === src ? base : `${base} · ${key}`;
+  }
+  return map;
+}
+
 export function overview(txns: Transaction[], ingestStats?: unknown) {
   const income = txns.filter(isRealIncome).reduce((a, t) => a + t.amount, 0);
   const consumption = txns.filter(isConsumption).reduce((a, t) => a + t.amount, 0);
@@ -37,23 +56,31 @@ export function overview(txns: Transaction[], ingestStats?: unknown) {
     .filter((t) => t.direction === 'out' && !t.isTransfer && t.category === 'savings')
     .reduce((a, t) => a + t.amount, 0);
 
-  // แยกตามกระเป๋า
+  // แยกตามกระเป๋า/บัญชี (แยกหลายบัญชีในแบงก์เดียวกันด้วยคีย์บัญชี)
+  const walletLabels = walletLabelMap(txns);
   const sourceMap = new Map<string, { income: number; expense: number; count: number }>();
+  // ยอดคงเหลือจริงล่าสุดต่อบัญชี = balanceAfter ของรายการล่าสุด (txns เรียงเวลาเก่า→ใหม่ ตัวหลังทับตัวหน้า)
+  const balanceMap = new Map<string, number>();
   for (const t of txns) {
-    const s = sourceMap.get(t.source) ?? { income: 0, expense: 0, count: 0 };
+    const key = walletKey(t);
+    const s = sourceMap.get(key) ?? { income: 0, expense: 0, count: 0 };
     s.count++;
     if (isRealIncome(t)) s.income += t.amount;
     else if (isConsumption(t)) s.expense += t.amount;
-    sourceMap.set(t.source, s);
+    sourceMap.set(key, s);
+    if (t.balanceAfter != null) balanceMap.set(key, t.balanceAfter);
   }
   const bySource = [...sourceMap.entries()].map(([source, v]) => ({
     source,
-    label: SOURCE_LABEL[source] ?? source,
+    label: walletLabels[source] ?? SOURCE_LABEL[source] ?? source,
     income: round(v.income),
     expense: round(v.expense),
     net: round(v.income - v.expense),
     count: v.count,
+    balance: balanceMap.has(source) ? round(balanceMap.get(source)!) : null,
   }));
+  // ยอดเงินรวมทุกบัญชีที่รู้ยอดคงเหลือ (เงินจริงที่มีอยู่ตอนนี้)
+  const totalBalance = round([...balanceMap.values()].reduce((a, b) => a + b, 0));
 
   // แยกตามหมวด
   const cat = expenseByCategory(txns);
@@ -95,13 +122,14 @@ export function overview(txns: Transaction[], ingestStats?: unknown) {
       savings: round(savings),
       net: round(income - consumption),
       savingsRate: round(income > 0 ? (income - consumption) / income : 0, 4),
+      totalBalance,
     },
     bySource,
     byCategory,
     monthly,
-    health: computeHealthScore(txns),
-    insights: generateInsights(txns),
-    sankey: buildSankey(txns),
+    health: computeHealthScore(txns, getScoreProfile()),
+    insights: generateInsights(txns, getScoreProfile()),
+    sankey: buildSankey(txns, walletLabels),
     recurring: { count: recurring.length, monthlyTotal: round(recurringMonthly), items: recurring },
     transferCount: txns.filter((t) => t.isTransfer && t.direction === 'out').length,
     period: { from: dates[0] ?? null, to: dates[dates.length - 1] ?? null },

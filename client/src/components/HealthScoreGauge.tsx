@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { HealthScore } from '../lib/types';
+import type { HealthScore, ScorePillar, ScoreProfile } from '../lib/types';
+import { apiSend } from '../lib/api';
 
 function scoreColor(s: number): string {
   if (s >= 80) return '#16a34a';
@@ -20,8 +21,20 @@ function arcPath(cx: number, cy: number, r: number, fromDeg: number, toDeg: numb
   return `M ${a.x} ${a.y} A ${r} ${r} 0 ${large} 1 ${b.x} ${b.y}`;
 }
 
-export default function HealthScoreGauge({ health }: { health: HealthScore }) {
+const PROFILE_LABEL: Record<ScoreProfile, string> = {
+  student: 'นักเรียน',
+  adult: 'ผู้ใหญ่',
+};
+
+export default function HealthScoreGauge({
+  health,
+  onProfileChange,
+}: {
+  health: HealthScore;
+  onProfileChange?: () => void;
+}) {
   const [open, setOpen] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const W = 260;
   const cx = W / 2;
   const cy = 140;
@@ -29,10 +42,47 @@ export default function HealthScoreGauge({ health }: { health: HealthScore }) {
   const color = scoreColor(health.total);
   const valueDeg = (health.total / 100) * 180;
 
+  const setProfile = async (p: ScoreProfile) => {
+    if (p === health.profile || saving) return;
+    setSaving(true);
+    try {
+      await apiSend('/score-profile', 'PUT', { profile: p });
+      onProfileChange?.();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="card">
-      <h3>คะแนนสุขภาพการเงิน</h3>
-      <div className="sub">ดัชนีรวม 5 องค์ประกอบถ่วงน้ำหนัก (0–100) — คำนวณด้วยสถิติที่เราออกแบบเอง</div>
+      <div className="row between" style={{ alignItems: 'flex-start' }}>
+        <div>
+          <h3>คะแนนสุขภาพการเงิน</h3>
+          <div className="sub">4 เสาแบบ FinHealth (ใช้จ่าย·ออม·กู้ยืม·วางแผน) คำนวณจากอัตราส่วนการเงินจริงตามเกณฑ์ SET/ธปท.</div>
+        </div>
+        {/* โปรไฟล์เกณฑ์: นักเรียน / ผู้ใหญ่ */}
+        <div className="row" style={{ gap: 0, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', flexShrink: 0 }}>
+          {(['student', 'adult'] as ScoreProfile[]).map((p) => (
+            <button
+              key={p}
+              onClick={() => setProfile(p)}
+              disabled={saving}
+              style={{
+                padding: '6px 12px',
+                fontSize: 12.5,
+                fontFamily: 'inherit',
+                border: 'none',
+                cursor: saving ? 'default' : 'pointer',
+                background: health.profile === p ? 'var(--brand)' : 'transparent',
+                color: health.profile === p ? '#fff' : 'var(--muted)',
+                fontWeight: health.profile === p ? 600 : 400,
+              }}
+            >
+              {PROFILE_LABEL[p]}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="center">
         <svg viewBox={`0 0 ${W} 160`} style={{ width: '100%', maxWidth: 300 }}>
@@ -54,47 +104,67 @@ export default function HealthScoreGauge({ health }: { health: HealthScore }) {
       </div>
 
       <div style={{ marginTop: 6 }}>
-        {health.components.map((c) => (
-          <div key={c.id} style={{ borderTop: '1px solid var(--border)', padding: '10px 0' }}>
-            <div className="row between" style={{ cursor: 'pointer' }} onClick={() => setOpen(open === c.id ? null : c.id)}>
-              <div className="row" style={{ gap: 8 }}>
-                <span className="dot" style={{ background: scoreColor(c.score) }} />
-                <span style={{ fontWeight: 500, fontSize: 14 }}>{c.label}</span>
-                <span className="muted" style={{ fontSize: 12 }}>({Math.round(c.weight * 100)}%)</span>
-              </div>
-              <div className="row" style={{ gap: 8 }}>
-                <b style={{ fontSize: 14 }}>{Math.round(c.score)}</b>
-                <span className="muted" style={{ fontSize: 11 }}>{open === c.id ? '▲' : '▼'}</span>
-              </div>
-            </div>
-            <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 99, marginTop: 6 }}>
-              <div style={{ width: `${c.score}%`, height: '100%', background: scoreColor(c.score), borderRadius: 99 }} />
-            </div>
-            {open === c.id && (
-              <div style={{ marginTop: 8, fontSize: 12.5 }}>
-                <div className="muted">{c.detail}</div>
-                <code
-                  className="mono"
-                  style={{
-                    display: 'block',
-                    marginTop: 6,
-                    padding: '8px 10px',
-                    background: 'var(--surface-2)',
-                    borderRadius: 8,
-                    fontSize: 11.5,
-                    whiteSpace: 'pre-wrap',
-                  }}
-                >
-                  {c.formula}
-                </code>
-                <div className="muted" style={{ marginTop: 4 }}>
-                  สมทบคะแนนรวม = {c.score} × {c.weight} = <b>{c.contribution}</b>
-                </div>
-              </div>
-            )}
-          </div>
+        {health.pillars.map((p) => (
+          <PillarRow key={p.id} pillar={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} />
         ))}
       </div>
+    </div>
+  );
+}
+
+function PillarRow({ pillar, open, onToggle }: { pillar: ScorePillar; open: boolean; onToggle: () => void }) {
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', padding: '10px 0' }}>
+      <div className="row between" style={{ cursor: 'pointer' }} onClick={onToggle}>
+        <div className="row" style={{ gap: 8 }}>
+          <span className="dot" style={{ background: scoreColor(pillar.score) }} />
+          <span style={{ fontWeight: 500, fontSize: 14 }}>{pillar.label}</span>
+          <span className="muted" style={{ fontSize: 12 }}>({Math.round(pillar.weight * 100)}%)</span>
+          {pillar.estimated && (
+            <span className="badge warn" style={{ fontSize: 10 }} title="เดาจากธุรกรรม — อาจคลาดเคลื่อน">
+              ประมาณ
+            </span>
+          )}
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <b style={{ fontSize: 14 }}>{Math.round(pillar.score)}</b>
+          <span className="muted" style={{ fontSize: 11 }}>{open ? '▲' : '▼'}</span>
+        </div>
+      </div>
+      <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 99, marginTop: 6 }}>
+        <div style={{ width: `${pillar.score}%`, height: '100%', background: scoreColor(pillar.score), borderRadius: 99 }} />
+      </div>
+      {open && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {pillar.metrics.map((m) => (
+            <div key={m.id} style={{ fontSize: 12.5, paddingLeft: 16, borderLeft: '2px solid var(--border)' }}>
+              <div className="row between">
+                <span style={{ fontWeight: 500 }}>{m.label}</span>
+                <b>{Math.round(m.score)}/100</b>
+              </div>
+              <div className="muted" style={{ marginTop: 2 }}>{m.detail}</div>
+              <code
+                className="mono"
+                style={{
+                  display: 'block',
+                  marginTop: 6,
+                  padding: '8px 10px',
+                  background: 'var(--surface-2)',
+                  borderRadius: 8,
+                  fontSize: 11,
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {m.formula}
+              </code>
+              <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>📚 {m.reference}</div>
+            </div>
+          ))}
+          <div className="muted" style={{ fontSize: 11.5 }}>
+            สมทบคะแนนรวม = {pillar.score} × {pillar.weight} = <b>{pillar.contribution}</b>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

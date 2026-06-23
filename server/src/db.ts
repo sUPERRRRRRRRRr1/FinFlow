@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Budget, MerchantRule } from '@finflow/shared';
+import { defaultTaxProfile } from '@finflow/shared';
+import type { Budget, MerchantRule, AccountConfig, ScoreProfile, TaxProfile } from '@finflow/shared';
 import type { Transaction, CategoryId, Direction, Source } from '@finflow/shared';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,7 +53,7 @@ db.exec(`
 `);
 
 // migration: เพิ่มคอลัมน์ใหม่กับฐานข้อมูลเดิม (ไม่มี = เพิ่ม, มีแล้ว = ข้าม)
-for (const col of ['account_ref TEXT', 'alias TEXT', 'auto_category TEXT']) {
+for (const col of ['account_ref TEXT', 'alias TEXT', 'auto_category TEXT', 'demo INTEGER DEFAULT 0', 'account TEXT']) {
   try {
     db.exec(`ALTER TABLE transactions ADD COLUMN ${col}`);
   } catch {
@@ -77,6 +78,8 @@ interface Row {
   account_ref: string | null;
   alias: string | null;
   auto_category: string | null;
+  demo: number | null;
+  account: string | null;
 }
 
 function rowToTxn(r: Row): Transaction {
@@ -88,6 +91,7 @@ function rowToTxn(r: Row): Transaction {
     direction: r.direction as Direction,
     counterparty: r.counterparty,
     source: r.source as Source,
+    account: r.account ?? undefined,
     category: r.category as CategoryId,
     rawDesc: r.raw_desc ?? undefined,
     balanceAfter: r.balance_after ?? undefined,
@@ -97,40 +101,58 @@ function rowToTxn(r: Row): Transaction {
     accountRef: r.account_ref ?? undefined,
     alias: r.alias ?? undefined,
     autoCategory: (r.auto_category as CategoryId) ?? undefined,
+    demo: r.demo ? true : undefined,
   };
 }
 
 const insertStmt = db.prepare(`
   INSERT OR REPLACE INTO transactions
     (id, date, time, amount, direction, counterparty, source, category,
-     raw_desc, balance_after, fingerprint, is_transfer, transfer_group, account_ref, alias, auto_category)
+     raw_desc, balance_after, fingerprint, is_transfer, transfer_group, account_ref, alias, auto_category, demo, account)
   VALUES
     (@id, @date, @time, @amount, @direction, @counterparty, @source, @category,
-     @raw_desc, @balance_after, @fingerprint, @is_transfer, @transfer_group, @account_ref, @alias, @auto_category)
+     @raw_desc, @balance_after, @fingerprint, @is_transfer, @transfer_group, @account_ref, @alias, @auto_category, @demo, @account)
 `);
+
+function runInsert(t: Transaction): void {
+  insertStmt.run({
+    id: t.id,
+    date: t.date,
+    time: t.time ?? null,
+    amount: t.amount,
+    direction: t.direction,
+    counterparty: t.counterparty,
+    source: t.source,
+    category: t.category,
+    raw_desc: t.rawDesc ?? null,
+    balance_after: t.balanceAfter ?? null,
+    fingerprint: t.fingerprint ?? null,
+    is_transfer: t.isTransfer ? 1 : 0,
+    transfer_group: t.transferGroup ?? null,
+    account_ref: t.accountRef ?? null,
+    alias: t.alias ?? null,
+    auto_category: t.autoCategory ?? t.category,
+    demo: t.demo ? 1 : 0,
+    account: t.account ?? null,
+  });
+}
 
 export function insertTransactions(txns: Transaction[]): number {
   const tx = db.transaction((items: Transaction[]) => {
-    for (const t of items) {
-      insertStmt.run({
-        id: t.id,
-        date: t.date,
-        time: t.time ?? null,
-        amount: t.amount,
-        direction: t.direction,
-        counterparty: t.counterparty,
-        source: t.source,
-        category: t.category,
-        raw_desc: t.rawDesc ?? null,
-        balance_after: t.balanceAfter ?? null,
-        fingerprint: t.fingerprint ?? null,
-        is_transfer: t.isTransfer ? 1 : 0,
-        transfer_group: t.transferGroup ?? null,
-        account_ref: t.accountRef ?? null,
-        alias: t.alias ?? null,
-        auto_category: t.autoCategory ?? t.category,
-      });
-    }
+    for (const t of items) runInsert(t);
+    return items.length;
+  });
+  return tx(txns);
+}
+
+/**
+ * แทนที่ธุรกรรมทั้งหมดแบบ atomic (ลบทั้งหมด + ใส่ชุดใหม่ ในทรานแซกชันเดียว)
+ * ถ้า insert ล้มเหลว ทรานแซกชันจะ rollback → ข้อมูลเดิมไม่หาย (กันข้อมูลหายตอน ingest พัง)
+ */
+export function replaceAllTransactions(txns: Transaction[]): number {
+  const tx = db.transaction((items: Transaction[]) => {
+    db.exec('DELETE FROM transactions');
+    for (const t of items) runInsert(t);
     return items.length;
   });
   return tx(txns);
@@ -148,6 +170,11 @@ export function countTransactions(): number {
 
 export function clearTransactions(): void {
   db.exec('DELETE FROM transactions');
+}
+
+/** ลบเฉพาะรายการตัวอย่าง (demo) — ไม่แตะข้อมูลจริง ใช้ตอนโหลด/รีโหลดชุดเดโมควบคู่ข้อมูลจริง */
+export function clearDemoTransactions(): void {
+  db.exec('DELETE FROM transactions WHERE demo = 1');
 }
 
 export function updateCategory(id: string, category: CategoryId): void {
@@ -210,4 +237,44 @@ export function getMeta(key: string): string | undefined {
 
 export function setMeta(key: string, value: string): void {
   db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
+}
+
+/** การตั้งค่าบัญชีของผู้ใช้ ("บัญชีเล่มนี้คือบัญชีอะไร") — เก็บใน meta เป็น JSON */
+export function getAccounts(): AccountConfig[] {
+  const raw = getMeta('accounts');
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? (list as AccountConfig[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setAccounts(accounts: AccountConfig[]): void {
+  setMeta('accounts', JSON.stringify(accounts));
+}
+
+/** โปรไฟล์เกณฑ์คะแนนสุขภาพการเงิน (นักเรียน/ผู้ใหญ่) — เก็บใน meta, ค่าเริ่มต้น 'adult' */
+export function getScoreProfile(): ScoreProfile {
+  return getMeta('scoreProfile') === 'student' ? 'student' : 'adult';
+}
+
+export function setScoreProfile(profile: ScoreProfile): void {
+  setMeta('scoreProfile', profile);
+}
+
+/** โปรไฟล์ภาษีของผู้ใช้ (รายได้แก้เอง + ค่าลดหย่อน) — เก็บใน meta เป็น JSON */
+export function getTaxProfile(): TaxProfile {
+  const raw = getMeta('taxProfile');
+  if (!raw) return defaultTaxProfile(2567);
+  try {
+    return { ...defaultTaxProfile(2567), ...(JSON.parse(raw) as TaxProfile) };
+  } catch {
+    return defaultTaxProfile(2567);
+  }
+}
+
+export function setTaxProfile(profile: TaxProfile): void {
+  setMeta('taxProfile', JSON.stringify(profile));
 }

@@ -42,6 +42,33 @@ export const EXPENSE_CATEGORIES: CategoryId[] = [
 ];
 
 /**
+ * การจัดกลุ่มรายจ่ายตามกรอบ 50/30/20 (Warren, 2005) — ใช้ในคะแนนสุขภาพการเงิน เสา "ใช้จ่าย"
+ *  - NEEDS (จำเป็น, เป้า ≤50%): กิน เดินทาง บิล/สาธารณูปโภค สุขภาพ การศึกษา
+ *  - WANTS (ตามใจ, เป้า ≤30%): ช้อปปิ้ง บันเทิง อื่นๆ
+ *  (ส่วน 20% ที่เหลือ = ออม/ใช้หนี้ ดูจากเสา "ออม"/"กู้ยืม")
+ */
+export const NEEDS_CATEGORIES: CategoryId[] = ['food', 'transport', 'bills', 'health', 'education'];
+export const WANTS_CATEGORIES: CategoryId[] = ['shopping', 'entertainment', 'other'];
+
+/**
+ * คำสำคัญที่บ่งชี้ "การผ่อน/ชำระหนี้" (สินเชื่อ บัตรเครดิต ผ่อนสินค้า) — ใช้ "เดา" ภาระหนี้จากธุรกรรม
+ * เพราะระบบยังไม่มีหมวดหนี้แยกต่างหาก รายการพวกนี้มักถูกจัดเป็น bills/other
+ * เป็นการประมาณ (heuristic) — ครอบคลุมแบรนด์สินเชื่อ/บัตรในไทยที่พบบ่อย
+ */
+const DEBT_KEYWORDS = [
+  'ผ่อน', 'ผ่อนชำระ', 'สินเชื่อ', 'เงินกู้', 'ชำระหนี้', 'ชำระบัตร', 'งวด',
+  'บัตรเครดิต', 'credit card', 'installment', 'loan', 'leasing', 'ลีสซิ่ง',
+  'กยศ', 'กรอ', 'student loan', 'ktc', 'aeon', 'อิออน', 'first choice', 'krungsri',
+  'umay', 'ยูเมะ', 'easy buy', 'home credit', 'เงินติดล้อ', 'ngern tid lor', 'the 1 card',
+];
+
+/** เดาว่ารายการนี้เป็นการผ่อน/ชำระหนี้หรือไม่ (จากชื่อผู้รับ/รายละเอียด) — heuristic */
+export function looksLikeDebt(text: string): boolean {
+  const t = (text || '').toLowerCase();
+  return DEBT_KEYWORDS.some((k) => t.includes(k.toLowerCase()));
+}
+
+/**
  * กฎจัดหมวดแบบ keyword (offline) — ใช้เมื่อไม่มี Gemini key
  * เรียงตามลำดับความเฉพาะเจาะจง ตัวแรกที่ match ชนะ
  */

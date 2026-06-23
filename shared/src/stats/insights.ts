@@ -1,6 +1,6 @@
 import type { Transaction } from '../types.js';
 import { round } from './descriptive.js';
-import { computeHealthScore } from './healthScore.js';
+import { computeHealthScore, type ScoreProfile } from './healthScore.js';
 import { categoryTrends } from './trends.js';
 import { detectRecurring } from './recurring.js';
 import { isConsumption, isRealIncome, expenseByCategory } from './timeseries.js';
@@ -20,13 +20,13 @@ const fmt = (n: number) => n.toLocaleString('th-TH', { maximumFractionDigits: 0 
  * สร้าง insight เป็นภาษาคนจากผลสถิติ (rule-based)
  * ใช้เป็น fallback เมื่อไม่มี Gemini และเป็น "ความจริงเชิงตัวเลข" ที่ AI จะนำไปเรียบเรียงต่อ
  */
-export function generateInsights(txns: Transaction[]): Insight[] {
+export function generateInsights(txns: Transaction[], profile: ScoreProfile = 'adult'): Insight[] {
   const out: Insight[] = [];
   if (txns.length === 0) return out;
 
   const income = txns.filter(isRealIncome).reduce((a, t) => a + t.amount, 0);
   const expense = txns.filter(isConsumption).reduce((a, t) => a + t.amount, 0);
-  const health = computeHealthScore(txns);
+  const health = computeHealthScore(txns, profile);
 
   // 1) สรุปคะแนนสุขภาพ
   out.push({
