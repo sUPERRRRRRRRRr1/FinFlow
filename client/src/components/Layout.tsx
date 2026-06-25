@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { useDataScope, type DataScope } from '../lib/dataScope';
 import { apiGet, apiSend } from '../lib/api';
 import { allStmPasswords } from '../lib/accountStore';
+import { Circle } from 'lucide-react';
 import { NAV_ICONS } from '../lib/icons';
 import PeriodPicker from './PeriodPicker';
 
@@ -82,7 +83,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         {NAV.map((n) => {
-          const Icon = NAV_ICONS[n.to];
+          const Icon = NAV_ICONS[n.to] ?? Circle;
           return (
             <NavLink
               key={n.to}
