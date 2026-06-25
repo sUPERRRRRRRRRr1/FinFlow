@@ -17,7 +17,7 @@
     "start": "npm run start -w server",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -b shared server client --noEmit false || tsc --version",
+    "typecheck": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p client/tsconfig.json",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
   },
   "devDependencies": {
