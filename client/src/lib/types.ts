@@ -13,9 +13,12 @@ import type {
   AccountConfig,
   AccountKind,
   TaxProfile, TaxResult, SavingSuggestion, FilingInfo, IncomeItem, Deductions, IncomeType,
+  ForecastData,
+  CategoryForecast,
+  CategoryForecastMonth,
 } from '@finflow/shared';
 
-export type { HealthScore, ScorePillar, ScoreMetric, ScoreProfile, Insight, SankeyGraph, CategoryTrend, RecurringItem, Transaction, BudgetStatus, Budget, AccountConfig, AccountKind, TaxProfile, TaxResult, SavingSuggestion, FilingInfo, IncomeItem, Deductions, IncomeType };
+export type { HealthScore, ScorePillar, ScoreMetric, ScoreProfile, Insight, SankeyGraph, CategoryTrend, RecurringItem, Transaction, BudgetStatus, Budget, AccountConfig, AccountKind, TaxProfile, TaxResult, SavingSuggestion, FilingInfo, IncomeItem, Deductions, IncomeType, ForecastData, CategoryForecast, CategoryForecastMonth };
 
 export interface TaxOverviewResponse {
   profile: TaxProfile;
