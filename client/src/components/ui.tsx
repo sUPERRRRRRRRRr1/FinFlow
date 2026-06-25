@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 export function PageHead({ title, desc, action }: { title: string; desc?: string; action?: ReactNode }) {
   return (
@@ -39,11 +40,40 @@ export function Empty({ text }: { text: string }) {
   );
 }
 
-export function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
+export type Trend = { dir: 'up' | 'down' | 'flat'; text: string; tone?: 'good' | 'bad' | 'muted' };
+
+function TrendChip({ dir, text, tone = 'muted' }: Trend) {
+  const cls = tone === 'good' ? 'good' : tone === 'bad' ? 'alert' : '';
+  const Arrow = dir === 'up' ? TrendingUp : dir === 'down' ? TrendingDown : Minus;
   return (
-    <div className="card stat">
+    <span className={`badge ${cls}`} style={{ marginTop: 8, fontSize: 11.5 }}>
+      <Arrow size={13} strokeWidth={2.5} />
+      {text}
+    </span>
+  );
+}
+
+export function Stat({
+  label,
+  value,
+  sub,
+  accent,
+  trend,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  accent?: string;
+  trend?: Trend;
+}) {
+  return (
+    <div
+      className="card stat"
+      style={accent ? { boxShadow: `var(--shadow), inset 3px 0 0 ${accent}` } : undefined}
+    >
       <div className="label">{label}</div>
       <div className="value">{value}</div>
+      {trend && <TrendChip {...trend} />}
       {sub && <div style={{ fontSize: 13, marginTop: 4 }}>{sub}</div>}
     </div>
   );
