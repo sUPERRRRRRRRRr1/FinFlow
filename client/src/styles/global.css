@@ -130,15 +130,33 @@ button {
   color: var(--muted);
   font-weight: 500;
   font-size: 15px;
-  transition: all 0.15s;
+  position: relative;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .nav-link:hover {
   background: var(--surface-2);
   color: var(--text);
 }
 .nav-link.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+.nav-link.active::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 9px;
   background: var(--brand);
-  color: #fff;
+}
+[data-theme='dark'] .nav-link.active {
+  color: var(--brand-2);
+}
+[data-theme='dark'] .nav-link.active::before {
+  background: var(--brand-2);
 }
 .nav-link .ic {
   font-size: 18px;
@@ -193,6 +211,15 @@ button {
   border-radius: var(--radius);
   padding: 20px;
   box-shadow: var(--shadow);
+  transition: box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+.card:hover {
+  box-shadow: var(--shadow-lg);
+}
+.card.lift:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--brand-2) 35%, var(--border));
 }
 .card h3 {
   font-size: 15px;
@@ -250,9 +277,15 @@ button {
   border-radius: var(--radius-sm);
   font-weight: 600;
   font-size: 14px;
-  transition: all 0.15s;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 }
 .btn:hover { border-color: var(--brand-2); }
+.btn:active { transform: scale(0.97); }
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-2) 35%, transparent);
+}
 .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
 .btn.primary:hover { background: #0d6258; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -283,6 +316,7 @@ button {
   border-radius: 999px;
   font-weight: 600;
   font-size: 13px;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .seg button.active {
   background: var(--brand);
@@ -307,6 +341,7 @@ table.tbl {
   border-bottom: 1px solid var(--border);
 }
 .tbl tr:last-child td { border-bottom: none; }
+.tbl tr:hover td { background: var(--surface-2); }
 
 .skeleton {
   background: linear-gradient(90deg, var(--surface-2), var(--border), var(--surface-2));
