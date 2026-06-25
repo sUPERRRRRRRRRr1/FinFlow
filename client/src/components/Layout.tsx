@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { useDataScope, type DataScope } from '../lib/dataScope';
 import { apiGet, apiSend } from '../lib/api';
 import { allStmPasswords } from '../lib/accountStore';
+import { NAV_ICONS } from '../lib/icons';
 import PeriodPicker from './PeriodPicker';
 
 const SCOPES: { id: DataScope; label: string }[] = [
@@ -12,16 +13,16 @@ const SCOPES: { id: DataScope; label: string }[] = [
 ];
 
 const NAV = [
-  { to: '/', icon: '📊', label: 'ภาพรวม', end: true },
-  { to: '/transactions', icon: '📒', label: 'รายการ' },
-  { to: '/flow', icon: '🌊', label: 'เส้นทางเงิน' },
-  { to: '/timeline', icon: '📈', label: 'ไทม์ไลน์' },
-  { to: '/forecast', icon: '🔮', label: 'คาดการณ์' },
-  { to: '/anomalies', icon: '🚨', label: 'รายจ่ายผิดปกติ' },
-  { to: '/budgets', icon: '🎯', label: 'งบประมาณ' },
-  { to: '/tax', icon: '🧾', label: 'ภาษี' },
-  { to: '/assistant', icon: '🤖', label: 'ผู้ช่วย AI' },
-  { to: '/connect', icon: '🔗', label: 'เชื่อมต่อข้อมูล' },
+  { to: '/', label: 'ภาพรวม', end: true },
+  { to: '/transactions', label: 'รายการ' },
+  { to: '/flow', label: 'เส้นทางเงิน' },
+  { to: '/timeline', label: 'ไทม์ไลน์' },
+  { to: '/forecast', label: 'คาดการณ์' },
+  { to: '/anomalies', label: 'รายจ่ายผิดปกติ' },
+  { to: '/budgets', label: 'งบประมาณ' },
+  { to: '/tax', label: 'ภาษี' },
+  { to: '/assistant', label: 'ผู้ช่วย AI' },
+  { to: '/connect', label: 'เชื่อมต่อข้อมูล' },
 ];
 
 function useTheme() {
@@ -80,18 +81,23 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <span>เส้นทางการเงินส่วนบุคคล</span>
           </div>
         </div>
-        {NAV.map((n) => (
-          <NavLink
-            key={n.to}
-            to={n.to}
-            end={n.end}
-            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-            onClick={() => setOpen(false)}
-          >
-            <span className="ic">{n.icon}</span>
-            {n.label}
-          </NavLink>
-        ))}
+        {NAV.map((n) => {
+          const Icon = NAV_ICONS[n.to];
+          return (
+            <NavLink
+              key={n.to}
+              to={n.to}
+              end={n.end}
+              className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+              onClick={() => setOpen(false)}
+            >
+              <span className="ic" aria-hidden="true">
+                <Icon size={18} strokeWidth={2} />
+              </span>
+              {n.label}
+            </NavLink>
+          );
+        })}
         <div className="sidebar-foot">
           {sync !== 'idle' && (
             <div className="badge" style={{ width: '100%', marginBottom: 10, fontSize: 11.5 }}>
