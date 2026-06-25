@@ -1,6 +1,6 @@
 import type { Granularity, Transaction } from '@finflow/shared';
 import { walletKey } from '@finflow/shared';
-import { getAccounts, getScoreProfile } from '../db.js';
+import { getAccounts, getScoreProfile, getBudgets } from '../db.js';
 import {
   CATEGORY_META,
   aggregate,
@@ -13,6 +13,7 @@ import {
   detectOutliers,
   detectRecurring,
   expenseByCategory,
+  forecastByCategory,
   forecastNext,
   generateInsights,
   isConsumption,
@@ -244,4 +245,10 @@ export function anomalies(txns: Transaction[]) {
 /** ชุดข้อมูลรายวัน (สำหรับคำนวณซ้ำที่อื่น) */
 export function dailyExpense(txns: Transaction[]): number[] {
   return dailyExpenseActive(txns);
+}
+
+/** พยากรณ์ค่าใช้จ่ายรายหมวด 3 เดือนข้างหน้า */
+export function forecastExpense(txns: Transaction[]) {
+  const budgets = getBudgets();
+  return forecastByCategory(txns, budgets);
 }

@@ -16,7 +16,7 @@ const NAV = [
   { to: '/transactions', icon: '📒', label: 'รายการ' },
   { to: '/flow', icon: '🌊', label: 'เส้นทางเงิน' },
   { to: '/timeline', icon: '📈', label: 'ไทม์ไลน์' },
-  { to: '/categories', icon: '🗂️', label: 'แนวโน้มหมวด' },
+  { to: '/forecast', icon: '🔮', label: 'คาดการณ์' },
   { to: '/anomalies', icon: '🚨', label: 'รายจ่ายผิดปกติ' },
   { to: '/budgets', icon: '🎯', label: 'งบประมาณ' },
   { to: '/tax', icon: '🧾', label: 'ภาษี' },

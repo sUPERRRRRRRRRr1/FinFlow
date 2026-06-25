@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { Granularity } from '@finflow/shared';
-import { overview, timeline, categories, anomalies } from '../services/analytics.js';
+import { overview, timeline, categories, anomalies, forecastExpense } from '../services/analytics.js';
 import { financialAdvice } from '../services/gemini.js';
 import { computeHealthScore, generateInsights } from '@finflow/shared';
 import { getMeta, getScoreProfile } from '../db.js';
@@ -52,4 +52,10 @@ analyticsRouter.get('/advice', async (req, res) => {
   const profile = getScoreProfile();
   const advice = await financialAdvice(computeHealthScore(txns, profile), generateInsights(txns, profile));
   res.json(advice);
+});
+
+/** GET /api/analytics/forecast — พยากรณ์ค่าใช้จ่ายรายหมวด 3 เดือนข้างหน้า */
+analyticsRouter.get('/forecast', (req, res) => {
+  const txns = loadTransactions(req);
+  res.json(forecastExpense(txns));
 });
