@@ -27,8 +27,11 @@ export default function Dashboard() {
       <Async state={state} height={500}>
         {(o) => {
           const m = o.monthly;
-          const last = m[m.length - 1];
-          const prev = m[m.length - 2];
+          // เทียบเทรนด์จากสองเดือนที่ "ครบเดือน" ล่าสุด — ตัดเดือนปัจจุบันที่ยังเดินไม่จบออก (กัน −99% หลอกตา)
+          const curKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+          const mc = m.length && m[m.length - 1].key === curKey ? m.slice(0, -1) : m;
+          const last = mc[mc.length - 1];
+          const prev = mc[mc.length - 2];
           return (
           <div className="grid" style={{ gap: 18 }}>
             {/* แถวสถิติหลัก */}
