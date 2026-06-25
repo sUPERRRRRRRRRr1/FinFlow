@@ -5,7 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import Flow from './pages/Flow';
 import Timeline from './pages/Timeline';
-import Categories from './pages/Categories';
+import Forecast from './pages/Forecast';
 import Anomalies from './pages/Anomalies';
 import Budgets from './pages/Budgets';
 import Assistant from './pages/Assistant';
@@ -21,7 +21,7 @@ export default function App() {
         <Route path="/transactions" element={<Transactions />} />
         <Route path="/flow" element={<Flow />} />
         <Route path="/timeline" element={<Timeline />} />
-        <Route path="/categories" element={<Categories />} />
+        <Route path="/forecast" element={<Forecast />} />
         <Route path="/anomalies" element={<Anomalies />} />
         <Route path="/budgets" element={<Budgets />} />
         <Route path="/assistant" element={<Assistant />} />
