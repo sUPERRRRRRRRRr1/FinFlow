@@ -16,9 +16,27 @@
   --warn: #f59e0b;
   --alert: #ef4444;
 
-  --shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 8px 24px rgba(15, 23, 42, 0.05);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 28px -12px rgba(15, 23, 42, 0.14);
+  --shadow-lg: 0 2px 4px rgba(15, 23, 42, 0.06), 0 20px 40px -16px rgba(15, 23, 42, 0.22);
   --radius: 16px;
   --radius-sm: 10px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --fs-display: 30px;
+  --fs-h1: 26px;
+  --fs-h2: 20px;
+  --fs-body: 15px;
+  --fs-sm: 13px;
+  --fs-xs: 11.5px;
+  --dur: 0.18s;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --font: 'IBM Plex Sans Thai', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
@@ -31,7 +49,9 @@
   --muted: #93a4bd;
   --border: #243049;
   --brand-soft: #134e4a;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 12px 30px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 30px -14px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.4), 0 24px 44px -18px rgba(0, 0, 0, 0.6);
 }
 
 * {
