@@ -13,3 +13,4 @@ export * from './recurring.js';
 export * from './budget.js';
 export * from './insights.js';
 export * from './merchantRules.js';
+export * from './forecast.js';
