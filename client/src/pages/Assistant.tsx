@@ -31,7 +31,9 @@ export default function Assistant() {
     setInput('');
     setLoading(true);
     try {
-      const res = await apiSend<{ answer: string; facts: string; source: string }>('/chat', 'POST', { question });
+      // แนบบทสนทนาก่อนหน้า (สูงสุด 6 ข้อความ) ให้ถามต่อเนื่องได้ เช่น "แล้วเดือนก่อนล่ะ"
+      const history = msgs.slice(-6).map((m) => ({ role: m.role, text: m.text }));
+      const res = await apiSend<{ answer: string; facts: string; source: string }>('/chat', 'POST', { question, history });
       setMsgs((m) => [...m, { role: 'bot', text: res.answer, facts: res.facts, source: res.source }]);
     } catch (e) {
       setMsgs((m) => [...m, { role: 'bot', text: 'ขออภัย เกิดข้อผิดพลาด: ' + (e as Error).message }]);
