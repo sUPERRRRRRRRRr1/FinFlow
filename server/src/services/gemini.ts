@@ -105,36 +105,59 @@ ${facts}
 }
 
 /**
- * ตอบคำถามแบบ RAG: ข้อเท็จจริง+ตัวเลขถูกคำนวณด้วยโค้ดเราแล้ว ส่งให้ LLM เรียบเรียงเท่านั้น
+ * ตอบคำถามแบบ RAG: fact-sheet + ตัวเลขถูกคำนวณด้วยโค้ดแล้ว LLM เลือก+เรียบเรียงเท่านั้น
+ * รองรับการถามต่อเนื่องด้วย history (บทสนทนาก่อนหน้า)
  */
 export async function answerQuestion(
   question: string,
-  facts: string,
+  snapshot: string,
+  focus: string,
   sample: SafeTransaction[],
+  history: { role: 'user' | 'bot'; text: string }[] = [],
 ): Promise<{ text: string; source: TextSource }> {
   const ctx = sample
     .slice(0, 40)
     .map((t) => `${t.date} ${t.direction === 'out' ? '-' : '+'}${fmt(t.amount)} ${t.merchant} [${t.category}]`)
     .join('\n');
 
-  const prompt = `คุณเป็นผู้ช่วยการเงินส่วนตัว พูดภาษาไทย ตอบกระชับและอ้างอิงเฉพาะข้อมูลด้านล่าง
-ห้ามแต่งตัวเลขเอง ใช้ตัวเลขสรุปที่ให้มาเท่านั้น
+  const convo = history
+    .slice(-6)
+    .map((m) => `${m.role === 'user' ? 'ผู้ใช้' : 'ผู้ช่วย'}: ${m.text}`)
+    .join('\n');
 
-== ตัวเลขสรุป (คำนวณแล้ว) ==
-${facts}
+  const prompt = `คุณเป็นผู้ช่วยการเงินส่วนตัว พูดภาษาไทย ตอบให้ "ตรงคำถาม" ก่อนเสมอ กระชับ เป็นกันเอง
+กฎ:
+- ใช้เฉพาะตัวเลขใน "ข้อมูลการเงิน" ด้านล่าง ห้ามแต่งตัวเลขเอง
+- ถ้าข้อมูลไม่พอจะตอบ ให้บอกตรงๆ ว่าไม่มีข้อมูลส่วนนั้น อย่าเดา
+- ถ้าผู้ใช้ขอคำแนะนำ ให้ยกจุดอ่อน/ความผิดปกติจากข้อมูลมาประกอบ
 
-== ตัวอย่างรายการที่เกี่ยวข้อง ==
+== ข้อมูลการเงิน (คำนวณด้วยโค้ดแล้ว) ==
+${snapshot}
+
+${focus ? focus + '\n\n' : ''}== ตัวอย่างรายการที่เกี่ยวข้อง ==
 ${ctx || '(ไม่มี)'}
-
-คำถาม: ${question}
+${convo ? `\n== บทสนทนาก่อนหน้า ==\n${convo}\n` : ''}
+คำถามล่าสุด: ${question}
 ตอบ:`;
 
   const ai = await generate(prompt);
   if (ai) return { text: ai.text, source: ai.source };
-  return {
-    text: `จากข้อมูลของคุณ:\n${facts}`,
-    source: 'rule-based',
-  };
+  return { text: ruleBasedAnswer(question, snapshot, focus), source: 'rule-based' };
+}
+
+/** fallback ไม่มี LLM: เลือก section ที่เกี่ยวข้องกับคำถามจาก fact-sheet (แทนการเทดิบทั้งก้อน) */
+function ruleBasedAnswer(question: string, snapshot: string, focus: string): string {
+  const sections = snapshot.split('\n\n');
+  const q = question.toLowerCase();
+  const pick = (kw: RegExp) => sections.find((s) => kw.test(s));
+  let sec: string | undefined;
+  if (/ผิดปกติ|แปลก|ปกติ/.test(q)) sec = pick(/ข้อสังเกต|ผิดปกติ/);
+  else if (/ภาษี|ลดหย่อน|ยื่น/.test(q)) sec = pick(/^ภาษี/);
+  else if (/บิล|ประจำ|สมาชิก|subscription/i.test(q)) sec = pick(/ประจำ/);
+  else if (/คะแนน|สุขภาพ|เก็บเงิน|ออม|เหลือ/.test(q)) sec = pick(/สุขภาพการเงิน|ภาพรวม/);
+  else if (/หมวด|มากสุด|เยอะ|top/i.test(q)) sec = pick(/เจาะลึก|เทรนด์รายหมวด/);
+  const body = sec ?? sections[0] ?? snapshot;
+  return [focus, body].filter(Boolean).join('\n');
 }
 
 /** เรียบเรียงคำแนะนำภาษีเป็นภาษาคน (ตัวเลขคำนวณมาแล้ว ห้ามแก้) */
