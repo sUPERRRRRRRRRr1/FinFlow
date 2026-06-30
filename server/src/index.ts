@@ -62,8 +62,21 @@ app.use('/api/tax', taxRouter);
 // ── เสิร์ฟไฟล์ build ของ client ใน production ──
 const clientDist = path.resolve(__dirname, '..', '..', 'client', 'dist');
 if (existsSync(clientDist)) {
-  app.use(express.static(clientDist));
-  app.get('*', (_req, res) => res.sendFile(path.join(clientDist, 'index.html')));
+  // asset ที่มี content-hash (เปลี่ยนชื่อทุก build) cache ยาวได้ — แต่ index.html / sw /
+  // manifest ต้อง no-store เสมอ เพื่อให้เปิดทุกครั้งได้เวอร์ชันล่าสุด ไม่ติด cache เก่า
+  app.use(
+    express.static(clientDist, {
+      setHeaders(res, filePath) {
+        if (/(?:index\.html|sw\.js|registerSW\.js|\.webmanifest)$/.test(filePath)) {
+          res.setHeader('Cache-Control', 'no-store, must-revalidate');
+        }
+      },
+    }),
+  );
+  app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, must-revalidate');
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
 }
 
 // ── error handler กลาง: ตอบ JSON (ไม่ใช่หน้า HTML 500) เพื่อให้ฝั่ง client อ่าน error ได้ ──

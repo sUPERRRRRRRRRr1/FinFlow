@@ -6,13 +6,20 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
+// เปิด PWA Service Worker เฉพาะตอนตั้งใจ build เป็น PWA จริง (VITE_ENABLE_PWA=true)
+// ค่าเริ่มต้น = ปิด แล้วปล่อย SW แบบ "ฆ่าตัวเอง" (selfDestroying) เพื่อยกเลิก + ล้าง cache
+// ของ SW เก่าที่เคยติดตั้งไว้ในเบราว์เซอร์ออกให้หมด — แก้อาการ preview เปิดมาเป็นเวอร์ชันเก่า
+const enablePWA = process.env.VITE_ENABLE_PWA === 'true';
+
 export default defineConfig({
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      selfDestroying: !enablePWA,
       includeAssets: ['icon.svg'],
       workbox: {
+        cleanupOutdatedCaches: true,
         // อย่าให้ SW เสิร์ฟ app shell แทน /api/* (ไม่งั้น OAuth/CSV/callback โดนกลืน → หน้าว่าง)
         navigateFallbackDenylist: [/^\/api\//],
       },
