@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { ACCOUNT_KIND_META, accountLast4 } from '@finflow/shared';
 import type { AccountKind } from '@finflow/shared';
 import { useApi, apiSend } from '../lib/api';
@@ -6,6 +6,7 @@ import type { SystemStatus, AccountsResponse } from '../lib/types';
 import { PageHead, Async } from '../components/ui';
 import { extractPdfText, PdfPasswordError } from '../lib/pdf';
 import { getStmPassword, setStmPassword, allStmPasswords } from '../lib/accountStore';
+import { useDataScope } from '../lib/dataScope';
 
 const SOURCE_LABEL: Record<string, string> = {
   kbank: 'KBank',
@@ -108,7 +109,7 @@ function GmailCard({ configured, connected, onChange }: { configured: boolean; c
     setMsg('⏳ กำลังดึงเมลธนาคาร + OCR สลิป… อาจใช้เวลา 30–60 วิ');
     try {
       const call = () =>
-        apiSend<{ added: number; busy?: boolean }>('/ingest/gmail', 'POST', { passwords: allStmPasswords() });
+        apiSend<{ added: number; busy?: boolean; lockedPdfs?: number }>('/ingest/gmail', 'POST', { passwords: allStmPasswords() });
       // เลี่ยงชนกับ auto-sync เบื้องหลัง: ถ้า server กำลังดึงอยู่ (busy) ให้รอแล้วลองใหม่อัตโนมัติ
       let r = await call();
       for (let waited = 0; r.busy && waited < 90_000; waited += 3000) {
@@ -119,7 +120,12 @@ function GmailCard({ configured, connected, onChange }: { configured: boolean; c
       if (r.busy) {
         setMsg('⏳ ยังซิงค์เบื้องหลังไม่เสร็จ ลองกดใหม่อีกครั้งในอีกสักครู่');
       } else {
-        setMsg(`✅ ดึงจาก Gmail แล้ว เพิ่ม ${r.added} รายการ (statement + สลิปที่ OCR ได้)`);
+        setMsg(
+          `✅ ดึงจาก Gmail แล้ว เพิ่ม ${r.added} รายการ (statement + สลิปที่ OCR ได้)` +
+            (r.lockedPdfs
+              ? ` · ⚠️ มี statement ใส่รหัส ${r.lockedPdfs} ฉบับที่ปลดล็อกไม่ได้ — บันทึกรหัสไฟล์ STM ในการ์ด “บัญชีของฉัน” ด้านล่าง แล้วกดดึงใหม่`
+              : ''),
+        );
         onChange();
       }
     } catch (e) {
@@ -281,6 +287,10 @@ interface EditRow {
   id: string;
   source: string;
   count: number;
+  realCount: number;
+  demoCount: number;
+  /** เดโมล้วน (ไม่มีรายการจริง) — ใช้แยกกลุ่มจริง/เดโม */
+  demo: boolean;
   nickname: string;
   kind: AccountKind;
   note: string;
@@ -316,11 +326,14 @@ function acctInput(width?: number | string): React.CSSProperties {
  * และบันทึกรหัสไฟล์ STM ของแต่ละบัญชี (เก็บในเครื่องเท่านั้น) ไว้ปลดล็อกอัตโนมัติ
  */
 function AccountsCard() {
+  const { scope, refresh } = useDataScope();
   const state = useApi<AccountsResponse>('/accounts');
   const [rows, setRows] = useState<EditRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [reveal, setReveal] = useState(false);
+  // ชื่อเจ้าของบัญชี (กรอกหลายชื่อได้ คั่นด้วย ,) — ใช้จับ "โอนเข้าบัญชีตัวเอง" ไม่ให้นับเป็นรายจ่าย
+  const [selfNames, setSelfNames] = useState('');
 
   useEffect(() => {
     const d = state.data;
@@ -329,6 +342,7 @@ function AccountsCard() {
     for (const det of d.detected) {
       byId.set(det.id, {
         id: det.id, source: det.source, count: det.count,
+        realCount: det.realCount, demoCount: det.demoCount, demo: det.demo,
         nickname: '', kind: guessKind(det.source), note: '', pw: getStmPassword(det.id),
       });
     }
@@ -336,16 +350,20 @@ function AccountsCard() {
       const cur = byId.get(a.id);
       byId.set(a.id, {
         id: a.id, source: a.source, count: cur?.count ?? 0,
+        realCount: cur?.realCount ?? 0, demoCount: cur?.demoCount ?? 0,
+        demo: a.demo ?? cur?.demo ?? false,
         nickname: a.nickname, kind: a.kind, note: a.note ?? '', pw: getStmPassword(a.id),
       });
     }
-    setRows([...byId.values()].sort((x, y) => y.count - x.count));
+    // เรียงบัญชีจริงขึ้นก่อน แล้วบัญชีเดโม (แต่ละกลุ่มเรียงตามจำนวนรายการ) — ให้แยก "ขาดกัน" ชัดเจน
+    setRows([...byId.values()].sort((x, y) => Number(x.demo) - Number(y.demo) || y.count - x.count));
+    setSelfNames((d.selfNames ?? []).join(', '));
   }, [state.data]);
 
   const update = (i: number, patch: Partial<EditRow>) =>
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const addRow = () =>
-    setRows((rs) => [...rs, { id: '', source: 'kbank', count: 0, nickname: '', kind: 'daily', note: '', pw: '' }]);
+    setRows((rs) => [...rs, { id: '', source: 'kbank', count: 0, realCount: 0, demoCount: 0, demo: false, nickname: '', kind: 'daily', note: '', pw: '' }]);
   const removeRow = (i: number) => setRows((rs) => rs.filter((_, j) => j !== i));
 
   const save = async () => {
@@ -362,17 +380,30 @@ function AccountsCard() {
           kind: r.kind,
           note: r.note.trim() || undefined,
         }));
-      await apiSend('/accounts', 'PUT', { accounts });
+      const names = [...new Set(selfNames.split(',').map((n) => n.trim()).filter(Boolean))];
+      const resp = await apiSend<{ retagged?: number }>('/accounts', 'PUT', { accounts, selfNames: names });
       // รหัส STM เก็บในเครื่องเท่านั้น (ไม่ส่งไปกับ PUT ด้านบน)
       for (const r of rows) if (r.id.trim()) setStmPassword(r.id.trim(), r.pw.trim());
-      setMsg('✅ บันทึกการตั้งค่าบัญชีแล้ว — Dashboard/Sankey/รายการ จะแยกตามบัญชีให้');
+      setMsg(`✅ บันทึกแล้ว — แยกบัญชี + จับ "โอนเข้าบัญชีตัวเอง" ให้${resp.retagged ? ` (คำนวณ ${resp.retagged} รายการใหม่)` : ''}`);
       state.refetch();
+      refresh(); // อัปเดต Dashboard/Sankey/รายการ ทุกหน้าให้เห็นผลทันที
     } catch (e) {
       setMsg('❌ ' + (e as Error).message);
     } finally {
       setBusy(false);
     }
   };
+
+  // กรองการแสดงผลตาม scope (จริง/เดโม/ทั้งหมด) — แต่ปุ่มบันทึกยังส่ง rows ครบทุกบัญชี (ไม่ลบ config ของอีก scope)
+  const isVisible = (r: EditRow) => scope === 'all' || (scope === 'real' ? !r.demo : r.demo);
+  const scopedCount = (r: EditRow) => (scope === 'real' ? r.realCount : scope === 'demo' ? r.demoCount : r.count);
+  const realN = rows.filter((r) => !r.demo).length;
+  const demoN = rows.filter((r) => r.demo).length;
+  const visibleN = rows.filter(isVisible).length;
+  const countLabel =
+    scope === 'real' ? `📋 บัญชีจริง ${realN} บัญชี`
+      : scope === 'demo' ? `🧪 บัญชีตัวอย่าง ${demoN} บัญชี`
+      : `📋 พบ ${realN} บัญชีจริง${demoN ? ` · 🧪 ${demoN} ตัวอย่าง` : ''} — เลือกประเภทแล้วกดบันทึก`;
 
   return (
     <div className="card">
@@ -392,33 +423,63 @@ function AccountsCard() {
         <div className="muted" style={{ marginTop: 10 }}>กำลังโหลด…</div>
       ) : (
         <div className="grid" style={{ gap: 12, marginTop: 12 }}>
-          {rows.length === 0 ? (
+          {visibleN === 0 ? (
             <div className="muted" style={{ fontSize: 13 }}>
-              ยังไม่พบบัญชี — เชื่อม Gmail/อัปโหลด statement ให้ระบบตรวจพบอัตโนมัติ หรือกด “＋ เพิ่มบัญชี” เอง
+              {scope === 'demo'
+                ? 'ไม่มีบัญชีตัวอย่าง — โหลดชุดเดโมจากปุ่มด้านบน'
+                : 'ยังไม่พบบัญชี — เชื่อม Gmail/อัปโหลด statement ให้ระบบตรวจพบอัตโนมัติ หรือกด “＋ เพิ่มบัญชี” เอง'}
             </div>
           ) : (
             <div className="badge info" style={{ alignSelf: 'flex-start' }}>
-              📋 พบ {rows.length} บัญชี/กระเป๋า — เลือกประเภทของแต่ละอันแล้วกดบันทึก
+              {countLabel}
             </div>
           )}
-          {rows.map((r, i) => (
-            <div key={i} style={{ borderTop: i === 0 ? 'none' : '1px solid var(--border)', paddingTop: i === 0 ? 0 : 14 }}>
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span className="badge">{SOURCE_LABEL[r.source] ?? r.source}</span>
-                {r.id ? (
-                  <span className="mono muted" style={{ fontSize: 12 }}>{r.id}</span>
-                ) : (
-                  <input
-                    placeholder="เลขบัญชี เช่น 160-3-73798-5"
-                    value={r.id}
-                    onChange={(e) => update(i, { id: e.target.value })}
-                    style={acctInput(190)}
-                  />
+
+          {/* ชื่อเจ้าของบัญชี — โอน/รับโอนที่ผู้รับเป็นชื่อนี้ = ย้ายเงินระหว่างบัญชีตัวเอง ไม่นับเป็นรายจ่าย */}
+          <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 12 }}>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: 13 }}>👤 ชื่อเจ้าของบัญชี</span>
+              <input
+                placeholder="เช่น สุวิจักขณ์ ปิ่นรัมย์ (หลายชื่อคั่นด้วย ,)"
+                value={selfNames}
+                onChange={(e) => setSelfNames(e.target.value)}
+                style={acctInput(320)}
+              />
+            </div>
+            <div className="muted" style={{ fontSize: 11.5, marginTop: 5 }}>
+              โอน/รับโอนที่ผู้รับเป็น “ชื่อนี้” = ย้ายเงินระหว่างบัญชีตัวเอง → ไม่นับเป็นรายจ่าย (โอนให้คนอื่นยังนับปกติ)
+            </div>
+          </div>
+
+          {rows.map((r, i) => {
+            if (!isVisible(r)) return null;
+            // หัวข้อคั่นกลุ่มเดโม (เฉพาะมุมมอง "ทั้งหมด" ที่เห็นทั้งสองกลุ่มพร้อมกัน)
+            const demoHeader = scope === 'all' && r.demo && (i === 0 || !rows[i - 1].demo);
+            return (
+              <Fragment key={i}>
+                {demoHeader && (
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6, paddingTop: 12, borderTop: '1px dashed var(--border)' }}>
+                    🧪 บัญชีตัวอย่าง (เดโม) — สร้างให้ดูตัวอย่าง ไม่ใช่ข้อมูลจากอีเมลของคุณ (สลับมุมมองเป็น “🟢 จริง” ด้านบนเพื่อซ่อน)
+                  </div>
                 )}
-                {r.count > 0 && <span className="muted" style={{ fontSize: 12 }}>· {r.count} รายการ</span>}
-                <div className="spacer" />
-                <button className="btn" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => removeRow(i)}>ลบ</button>
-              </div>
+                <div style={{ borderTop: i === 0 || demoHeader ? 'none' : '1px solid var(--border)', paddingTop: i === 0 || demoHeader ? 0 : 14, opacity: r.demo ? 0.7 : 1 }}>
+                  <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span className="badge">{SOURCE_LABEL[r.source] ?? r.source}</span>
+                    {r.demo && <span className="badge" title="บัญชีตัวอย่าง (เดโม) ไม่ใช่ข้อมูลจริง">🧪 เดโม</span>}
+                    {r.id ? (
+                      <span className="mono muted" style={{ fontSize: 12 }}>{r.id}</span>
+                    ) : (
+                      <input
+                        placeholder="เลขบัญชี เช่น 160-3-73798-5"
+                        value={r.id}
+                        onChange={(e) => update(i, { id: e.target.value })}
+                        style={acctInput(190)}
+                      />
+                    )}
+                    {scopedCount(r) > 0 && <span className="muted" style={{ fontSize: 12 }}>· {scopedCount(r)} รายการ</span>}
+                    <div className="spacer" />
+                    <button className="btn" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => removeRow(i)}>ลบ</button>
+                  </div>
 
               {/* กดเลือกได้เลยว่าบัญชีนี้คือบัญชีอะไร */}
               <div className="row wrap" style={{ gap: 6, marginTop: 9 }}>
@@ -466,8 +527,10 @@ function AccountsCard() {
                   style={acctInput(190)}
                 />
               </div>
-            </div>
-          ))}
+                </div>
+              </Fragment>
+            );
+          })}
 
           <div className="row" style={{ gap: 8, marginTop: 4 }}>
             <button className="btn" onClick={addRow}>＋ เพิ่มบัญชี</button>
@@ -476,7 +539,7 @@ function AccountsCard() {
           </div>
 
           <div className="muted" style={{ fontSize: 11.5 }}>
-            🔒 รหัส STM ถูกเก็บในเครื่อง/เบราว์เซอร์นี้เท่านั้น (localStorage) ไม่ถูกส่งขึ้นเซิร์ฟเวอร์ — ใช้ปลดล็อกไฟล์ตอนอัปโหลดอัตโนมัติ
+            🔒 รหัส STM เก็บในเบราว์เซอร์นี้ (localStorage) — ส่งให้เซิร์ฟเวอร์เฉพาะตอนดึง Gmail/อัปโหลดเพื่อปลดล็อกไฟล์ชั่วคราว และไม่ถูกบันทึกลงฐานข้อมูล
           </div>
           {msg && <div style={{ fontSize: 13 }}>{msg}</div>}
         </div>

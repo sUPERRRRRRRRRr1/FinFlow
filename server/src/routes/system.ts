@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { flags } from '../config.js';
+import { config, flags } from '../config.js';
 import { countTransactions, getScoreProfile, setScoreProfile } from '../db.js';
 import { getAuthUrl, exchangeCode, isConnected } from '../services/gmail.js';
 
@@ -46,7 +46,8 @@ systemRouter.get('/auth/google/callback', async (req, res) => {
   if (!code) return res.status(400).send('ไม่มี authorization code');
   try {
     await exchangeCode(code);
-    res.redirect('/?gmail=connected');
+    // dev: กลับไปหน้า client ที่ vite (5173) · prod: relative (พอร์ตเดียวกัน)
+    res.redirect(`${config.appUrl}/?gmail=connected`);
   } catch (err) {
     res.status(400).send('เชื่อม Gmail ไม่สำเร็จ: ' + (err as Error).message);
   }

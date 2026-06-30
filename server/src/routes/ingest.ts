@@ -59,10 +59,15 @@ ingestRouter.post('/gmail', async (req, res) => {
   try {
     // รหัส STM ที่ client บันทึกไว้ (localStorage) ส่งมาเพื่อปลดล็อก PDF อัตโนมัติ — ใช้ชั่วคราว ไม่เก็บลง DB
     const pdfPasswords = z.array(z.string()).safeParse(req.body?.passwords).data ?? [];
-    // ?recent=1 → ดึงเฉพาะ 21 วันล่าสุด (เร็ว ใช้ auto-sync ตอนเข้าเว็บ) · ไม่ใส่ = ทั้งปี (ปุ่มดึงเอง)
+    // ?recent=1 → auto-sync ตอนเข้าเว็บ (เร็ว) · ไม่ใส่ = ปุ่มดึงเอง (ทั้งปี)
+    // ใช้ 45 วัน (ไม่ใช่ 21) สำหรับ auto-sync เพื่อไม่ให้พลาด statement รายเดือนที่มาต้นเดือน หากเปิดเว็บห่างกันเกิน 3 สัปดาห์
     const recent = req.query.recent === '1';
-    const txns = await fetchBankTransactions(recent ? 100 : 250, recent ? 'newer_than:21d' : 'newer_than:13m', pdfPasswords);
-    res.json(await ingestAndStore(txns));
+    const { transactions, lockedPdfs } = await fetchBankTransactions(
+      recent ? 100 : 250,
+      recent ? 'newer_than:45d' : 'newer_than:13m',
+      pdfPasswords,
+    );
+    res.json({ ...(await ingestAndStore(transactions)), lockedPdfs });
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
   } finally {

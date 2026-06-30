@@ -23,7 +23,7 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
 
 /** ไอคอน + สีชิปต่อหมวด (CategoryId) — สี tint = สีเดิมของหมวดใน shared/categories.ts */
 export const CATEGORY_ICONS: Record<string, { Icon: LucideIcon; tint: string }> = {
-  income: { Icon: Wallet, tint: '#16a34a' },
+  income: { Icon: Wallet, tint: '#22c55e' },
   food: { Icon: UtensilsCrossed, tint: '#f97316' },
   shopping: { Icon: ShoppingBag, tint: '#ec4899' },
   transport: { Icon: Bus, tint: '#0ea5e9' },

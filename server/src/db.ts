@@ -53,7 +53,7 @@ db.exec(`
 `);
 
 // migration: เพิ่มคอลัมน์ใหม่กับฐานข้อมูลเดิม (ไม่มี = เพิ่ม, มีแล้ว = ข้าม)
-for (const col of ['account_ref TEXT', 'alias TEXT', 'auto_category TEXT', 'demo INTEGER DEFAULT 0', 'account TEXT']) {
+for (const col of ['account_ref TEXT', 'alias TEXT', 'auto_category TEXT', 'demo INTEGER DEFAULT 0', 'account TEXT', 'transfer_to TEXT']) {
   try {
     db.exec(`ALTER TABLE transactions ADD COLUMN ${col}`);
   } catch {
@@ -75,6 +75,7 @@ interface Row {
   fingerprint: string | null;
   is_transfer: number;
   transfer_group: string | null;
+  transfer_to: string | null;
   account_ref: string | null;
   alias: string | null;
   auto_category: string | null;
@@ -98,6 +99,7 @@ function rowToTxn(r: Row): Transaction {
     fingerprint: r.fingerprint ?? undefined,
     isTransfer: !!r.is_transfer,
     transferGroup: r.transfer_group ?? undefined,
+    transferTo: r.transfer_to ?? undefined,
     accountRef: r.account_ref ?? undefined,
     alias: r.alias ?? undefined,
     autoCategory: (r.auto_category as CategoryId) ?? undefined,
@@ -108,10 +110,10 @@ function rowToTxn(r: Row): Transaction {
 const insertStmt = db.prepare(`
   INSERT OR REPLACE INTO transactions
     (id, date, time, amount, direction, counterparty, source, category,
-     raw_desc, balance_after, fingerprint, is_transfer, transfer_group, account_ref, alias, auto_category, demo, account)
+     raw_desc, balance_after, fingerprint, is_transfer, transfer_group, transfer_to, account_ref, alias, auto_category, demo, account)
   VALUES
     (@id, @date, @time, @amount, @direction, @counterparty, @source, @category,
-     @raw_desc, @balance_after, @fingerprint, @is_transfer, @transfer_group, @account_ref, @alias, @auto_category, @demo, @account)
+     @raw_desc, @balance_after, @fingerprint, @is_transfer, @transfer_group, @transfer_to, @account_ref, @alias, @auto_category, @demo, @account)
 `);
 
 function runInsert(t: Transaction): void {
@@ -129,6 +131,7 @@ function runInsert(t: Transaction): void {
     fingerprint: t.fingerprint ?? null,
     is_transfer: t.isTransfer ? 1 : 0,
     transfer_group: t.transferGroup ?? null,
+    transfer_to: t.transferTo ?? null,
     account_ref: t.accountRef ?? null,
     alias: t.alias ?? null,
     auto_category: t.autoCategory ?? t.category,
@@ -253,6 +256,22 @@ export function getAccounts(): AccountConfig[] {
 
 export function setAccounts(accounts: AccountConfig[]): void {
   setMeta('accounts', JSON.stringify(accounts));
+}
+
+/** ชื่อเจ้าของบัญชีที่ผู้ใช้กรอกเอง — ใช้ตรวจจับ "โอนเข้าบัญชีตัวเอง" จากชื่อผู้รับ/ผู้โอน เก็บใน meta เป็น JSON array */
+export function getSelfNames(): string[] {
+  const raw = getMeta('selfNames');
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? (list as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setSelfNames(names: string[]): void {
+  setMeta('selfNames', JSON.stringify(names));
 }
 
 /** โปรไฟล์เกณฑ์คะแนนสุขภาพการเงิน (นักเรียน/ผู้ใหญ่) — เก็บใน meta, ค่าเริ่มต้น 'adult' */

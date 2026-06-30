@@ -1,6 +1,7 @@
 import type { Transaction, AccountKind, CategoryId } from '../types.js';
 import { walletKey } from '../types.js';
 import { diffDays } from './dates.js';
+import { stringSimilarity } from './dedup.js';
 
 /** 4 ตัวท้ายของเลขบัญชี (ตัวเลขล้วน) — STM/สลิปปิดบังเลขบัญชีเป็น "X####" ด้วย 4 ตัวท้ายนี้ */
 export function accountLast4(accountId: string): string | null {
@@ -23,31 +24,55 @@ export interface OwnAccountCode {
  *  - ออก → บัญชี "ออม" ของตัวเอง : category='savings' (นับเป็นเงินออม ไม่ใช่รายจ่าย)
  *  - ออก → บัญชีตัวเองอื่น       : isTransfer=true (เป็นกลาง)
  *  - เข้า ← บัญชีตัวเอง           : isTransfer=true (ไม่ใช่รายรับจริง เป็นเงินตัวเองที่ย้ายกลับ)
+ *
+ * จับ "บัญชีของตัวเอง" 2 ทาง:
+ *  1) เลขบัญชี X#### ในข้อความ ตรงกับบัญชีที่ตั้งค่าไว้
+ *  2) ชื่อผู้รับ/ผู้โอน ตรงกับชื่อเจ้าของบัญชี (selfNames ที่ผู้ใช้กรอกเอง) — ใช้ได้แม้สลิป
+ *     ระบุปลายทางเป็น "ชื่อ" ไม่ใช่เลขบัญชี และมี statement มาแค่ฝั่งเดียว
  */
-export function tagOwnTransfers(txns: Transaction[], own: OwnAccountCode[]): Transaction[] {
+export function tagOwnTransfers(
+  txns: Transaction[],
+  own: OwnAccountCode[],
+  selfNames: string[] = [],
+): Transaction[] {
   const byCode = new Map(own.filter((o) => o.code).map((o) => [o.code, o] as const));
-  if (byCode.size === 0) return txns;
+  const names = selfNames.map((n) => n.trim()).filter(Boolean);
+  if (byCode.size === 0 && names.length === 0) return txns;
   return txns.map((t) => {
     if (t.isTransfer) return t; // จับคู่ได้แล้ว (matchTransfers) ไม่ต้องแตะ
     const selfCode = t.account ? accountLast4(t.account) : null;
     const text = `${t.rawDesc ?? ''} ${t.counterparty ?? ''}`;
-    const matches = text.match(/X(\d{4})(?!\d)/g);
-    if (!matches) return t;
-    let ref: OwnAccountCode | undefined;
-    for (const m of matches) {
-      const code = m.slice(1);
-      if (code === selfCode) continue; // อ้างถึงบัญชีตัวเอง (เลขเดียวกัน) ข้าม
-      const o = byCode.get(code);
-      if (o) {
-        ref = o;
-        break;
+
+    // 0) ปลายทางที่ parser ดึงมาแล้ว (อีเมลแจ้งเตือน "เพื่อเข้าบัญชี: <เลขบัญชี>")
+    // ถ้าปลายทางเป็น "บัญชีตัวเอง" → โอนเข้าบัญชีตัวเอง + เก็บเลขบัญชีเต็มไว้ (รองรับเลขปิดบังด้วย)
+    if (t.transferTo) {
+      const ttDigits = t.transferTo.replace(/\D/g, '');
+      const dest = own.find(
+        (o) => o.account === t.transferTo || (ttDigits.length >= 4 && o.account.replace(/\D/g, '').includes(ttDigits)),
+      );
+      if (dest && dest.account !== (t.account ?? '')) {
+        return { ...t, isTransfer: true, category: 'own_transfer' as CategoryId, transferTo: dest.account };
       }
     }
-    if (!ref) return t;
-    if (t.direction === 'out' && ref.kind === 'savings') {
-      return { ...t, category: 'savings' as CategoryId };
+
+    // 1) จับจากเลขบัญชี X#### ที่อ้างถึง "บัญชีอื่นของเรา"
+    // โอนเข้าบัญชีตัวเองทุกชนิด (รวมออม) = ย้ายระหว่างกระเป๋า (เป็นกลาง ไม่ใช่รายจ่าย/ไม่แยกเป็นออม)
+    // เก็บปลายทาง (transferTo) ไว้ให้ Sankey วาดเส้นกระเป๋า→กระเป๋าได้ แม้ statement มาฝั่งเดียว
+    const matches = text.match(/X(\d{4})(?!\d)/g);
+    for (const m of matches ?? []) {
+      const code = m.slice(1);
+      if (code === selfCode) continue; // อ้างถึงบัญชีตัวเอง (เลขเดียวกัน) ข้าม
+      const ref = byCode.get(code);
+      if (ref) return { ...t, isTransfer: true, category: 'own_transfer' as CategoryId, transferTo: ref.account };
     }
-    return { ...t, isTransfer: true, category: 'transfer' as CategoryId };
+
+    // 2) จับจากชื่อเจ้าของบัญชี — ผู้รับ/ผู้โอน = ชื่อเราเอง → ย้ายเงินระหว่างบัญชีตัวเอง (ไม่ใช่รายจ่าย/รายรับจริง)
+    // ตัดคำนำหน้า (ด.ช./นาย ฯลฯ) ออกแล้วเทียบ ทำใน stringSimilarity ให้แล้ว — ใช้เกณฑ์เข้ม 0.9 กันชนกับคนอื่น
+    if (names.length && t.counterparty && names.some((n) => stringSimilarity(t.counterparty, n) >= 0.9)) {
+      return { ...t, isTransfer: true, category: 'own_transfer' as CategoryId };
+    }
+
+    return t;
   });
 }
 
@@ -110,10 +135,10 @@ export function matchTransfers(
       const inTx = tagged[best]!;
       outTx.isTransfer = true;
       outTx.transferGroup = g;
-      outTx.category = 'transfer';
+      outTx.category = 'own_transfer';
       inTx.isTransfer = true;
       inTx.transferGroup = g;
-      inTx.category = 'transfer';
+      inTx.category = 'own_transfer';
       matches.push({
         outId: outTx.id,
         inId: inTx.id,

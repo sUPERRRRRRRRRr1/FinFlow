@@ -91,6 +91,7 @@ export function makeTxn(p: {
   balanceAfter?: number;
   rawDesc?: string;
   account?: string;
+  transferTo?: string;
 }): Transaction {
   return {
     id: `${p.source}-${randomUUID().slice(0, 8)}`,
@@ -104,6 +105,7 @@ export function makeTxn(p: {
     category: classifyByKeyword(p.counterparty || p.rawDesc || '', p.direction),
     rawDesc: p.rawDesc,
     balanceAfter: p.balanceAfter,
+    transferTo: p.transferTo,
   };
 }
 

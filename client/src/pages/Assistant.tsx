@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { apiSend } from '../lib/api';
+import { useDataScope, withScope } from '../lib/dataScope';
 import { PageHead } from '../components/ui';
 
 interface Msg {
@@ -23,6 +24,7 @@ export default function Assistant() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const { scope, period } = useDataScope();
 
   const send = async (q: string) => {
     const question = q.trim();
@@ -33,7 +35,12 @@ export default function Assistant() {
     try {
       // แนบบทสนทนาก่อนหน้า (สูงสุด 6 ข้อความ) ให้ถามต่อเนื่องได้ เช่น "แล้วเดือนก่อนล่ะ"
       const history = msgs.slice(-6).map((m) => ({ role: m.role, text: m.text }));
-      const res = await apiSend<{ answer: string; facts: string; source: string }>('/chat', 'POST', { question, history });
+      // แนบ scope จริง/เดโม + ช่วงเวลา (เหมือนทุกหน้า) ให้ AI ตอบเฉพาะข้อมูลที่กำลังดูอยู่ ไม่ปนเดโมกับของจริง
+      const res = await apiSend<{ answer: string; facts: string; source: string }>(
+        withScope('/chat', scope, period),
+        'POST',
+        { question, history },
+      );
       setMsgs((m) => [...m, { role: 'bot', text: res.answer, facts: res.facts, source: res.source }]);
     } catch (e) {
       setMsgs((m) => [...m, { role: 'bot', text: 'ขออภัย เกิดข้อผิดพลาด: ' + (e as Error).message }]);

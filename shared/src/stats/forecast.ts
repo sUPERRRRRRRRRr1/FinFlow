@@ -24,6 +24,8 @@ export interface CategoryForecast {
   category: CategoryId;
   label: string;
   color: string;
+  /** ยอดจริงย้อนหลัง (เฉพาะเดือนที่จบแล้ว) สำหรับเป็นจุดอ้างอิงก่อนคาดการณ์ */
+  history: Array<{ label: string; total: number }>;
   months: CategoryForecastMonth[];
   budget: number | null;
   hasSeasonal: boolean;
@@ -148,7 +150,15 @@ export function forecastByCategory(
     catMap.set(t.category, (catMap.get(t.category) ?? 0) + t.amount);
   }
   const allMonths = [...monthlyCatSpend.keys()].sort();
-  const n = allMonths.length;
+  // ตัดเดือนปัจจุบันที่ยังไม่จบออกจากการเทรน — ข้อมูลไม่เต็มเดือนทำให้ EWMA ดึง forecast ต่ำผิด
+  const currentMk = today.slice(0, 7);
+  const completeMonths = allMonths.filter((mk) => mk < currentMk);
+  const trainMonths = completeMonths.length > 0 ? completeMonths : allMonths;
+  const n = trainMonths.length;
+
+  // เดือนจริงล่าสุด (จบแล้ว) ที่จะแสดงเป็นจุดอ้างอิงในกราฟ — 2 เดือนพอเป็น anchor และไม่ให้เดือน outlier ดันสเกล
+  const HISTORY = 2;
+  const histMonths = trainMonths.slice(-HISTORY);
 
   // 2. recurring items + budget map
   const recurringItems = detectRecurring(txns);
@@ -172,7 +182,7 @@ export function forecastByCategory(
 
   for (const cat of allCats) {
     const R_c = recurringMonthlyForCategory(recurringItems, cat, today);
-    const V_c = allMonths.map((mk) => Math.max(0, (monthlyCatSpend.get(mk)?.get(cat) ?? 0) - R_c));
+    const V_c = trainMonths.map((mk) => Math.max(0, (monthlyCatSpend.get(mk)?.get(cat) ?? 0) - R_c));
     const nc = V_c.length;
 
     // EWMA level + regression
@@ -191,7 +201,7 @@ export function forecastByCategory(
     const Sxx = xs.reduce((acc, x) => acc + (x - xBar) ** 2, 0) || 1;
 
     // seasonal indices (เปิดถ้า ≥ 12 เดือน)
-    const monthNums = allMonths.map((mk) => parseInt(mk.split('-')[1]!, 10));
+    const monthNums = trainMonths.map((mk) => parseInt(mk.split('-')[1]!, 10));
     const sIndices = seasonalActive ? computeSeasonalIndices(V_c, monthNums) : null;
 
     // forecast k = 1..horizon
@@ -230,6 +240,10 @@ export function forecastByCategory(
       category: cat,
       label: meta?.label ?? cat,
       color: meta?.color ?? '#64748b',
+      history: histMonths.map((mk) => ({
+        label: thaiMonthLabel(mk),
+        total: round(monthlyCatSpend.get(mk)?.get(cat) ?? 0),
+      })),
       months,
       budget: budgetMap.get(cat) ?? null,
       hasSeasonal: seasonalActive,
@@ -256,7 +270,7 @@ export function forecastByCategory(
   return {
     categories: catResults,
     total,
-    backtest: backtestForecast(txns, budgets),
+    backtest: backtestForecast(txns, budgets, today),
     horizon,
     seasonalActive,
   };
@@ -266,8 +280,15 @@ export function forecastByCategory(
  * Backtest ด้วย rolling-origin บน total monthly expense
  * folds = min(n−3, 3)
  */
-export function backtestForecast(txns: Transaction[], _budgets: Budget[]): ForecastData['backtest'] {
-  const months = aggregate(txns, 'month');
+export function backtestForecast(
+  txns: Transaction[],
+  _budgets: Budget[],
+  today = new Date().toISOString().slice(0, 10),
+): ForecastData['backtest'] {
+  // ใช้เฉพาะเดือนที่จบแล้ว (ตัดเดือนปัจจุบันที่ข้อมูลยังไม่เต็ม)
+  const currentMk = today.slice(0, 7);
+  const trainTxns = txns.filter((t) => monthKey(t.date) < currentMk);
+  const months = aggregate(trainTxns.length > 0 ? trainTxns : txns, 'month');
   const n = months.length;
   const folds = Math.min(n - 3, 3);
   if (folds < 1) return { mape: 0, baselineMape: 0, skillScore: 0, folds: 0 };

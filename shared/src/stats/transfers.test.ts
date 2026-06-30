@@ -29,13 +29,14 @@ describe('accountLast4', () => {
 });
 
 describe('tagOwnTransfers', () => {
-  it('โอนออกจากบัญชีใช้จ่าย → บัญชีออมตัวเอง (X1800) = นับเป็นเงินออม ไม่ใช่รายจ่าย', () => {
+  it('โอนออกจากบัญชีใช้จ่าย → บัญชีออมตัวเอง (X1800) = โอนระหว่างกระเป๋า (ไม่ใช่รายจ่าย, ไม่แยกเป็นออม) + รู้ปลายทาง', () => {
     const [r] = tagOwnTransfers(
       [txn({ account: '160-3-73798-5', direction: 'out', rawDesc: 'โอนไป X1800 นาย สุวิจักขณ์ ปิ่++', category: 'transfer' })],
       OWN,
     );
-    expect(r!.category).toBe('savings');
-    expect(r!.isTransfer).toBeFalsy(); // ยังเป็น out ที่นับเป็นออม (ไม่ใช่ transfer เป็นกลาง)
+    expect(r!.isTransfer).toBe(true);
+    expect(r!.category).toBe('own_transfer'); // โอนเข้าบัญชีตัวเอง = หมวดแยก (เป็นกลาง)
+    expect(r!.transferTo).toBe('222-8-72180-0'); // เก็บปลายทางไว้วาด Sankey กระเป๋า→กระเป๋า
   });
 
   it('โอนออกไปคนอื่น (X9999 ไม่ใช่บัญชีตัวเอง) = คงเป็นรายจ่ายเดิม', () => {
@@ -53,7 +54,7 @@ describe('tagOwnTransfers', () => {
       OWN,
     );
     expect(r!.isTransfer).toBe(true);
-    expect(r!.category).toBe('transfer');
+    expect(r!.category).toBe('own_transfer'); // โอนเข้าบัญชีตัวเอง = หมวดแยก (เป็นกลาง)
   });
 
   it('เงินเข้า ← บัญชีตัวเอง (X1800) = ไม่ใช่รายรับจริง (เป็นกลาง)', () => {
@@ -84,5 +85,34 @@ describe('tagOwnTransfers', () => {
   it('ไม่มีบัญชีตั้งค่า = คืนค่าเดิมทั้งหมด', () => {
     const input = [txn({ account: '160-3-73798-5', rawDesc: 'โอนไป X1800' })];
     expect(tagOwnTransfers(input, [])).toBe(input);
+  });
+
+  // ── จับ "โอนเข้าบัญชีตัวเอง" จากชื่อเจ้าของบัญชี (selfNames) — กรณีสลิปไม่มีเลขบัญชี ──
+  it('สลิปโอนเข้าชื่อตัวเอง (ไม่มีเลขบัญชี/X####) = ไม่นับเป็นรายจ่าย', () => {
+    const [r] = tagOwnTransfers(
+      [txn({ source: 'slip', account: undefined, direction: 'out', counterparty: 'ด.ช. สุวิจักขณ์ ปิ่นรัมย์', category: 'transfer' })],
+      OWN,
+      ['สุวิจักขณ์ ปิ่นรัมย์'],
+    );
+    expect(r!.isTransfer).toBe(true);
+    expect(r!.category).toBe('own_transfer'); // โอนเข้าบัญชีตัวเอง = หมวดแยก (เป็นกลาง)
+  });
+
+  it('ผู้รับเป็นชื่อคนอื่น (ไม่ตรง selfNames) = คงเป็นรายจ่ายปกติ', () => {
+    const [r] = tagOwnTransfers(
+      [txn({ source: 'slip', account: undefined, direction: 'out', counterparty: 'น.ส. วารี มะเต็ม', category: 'transfer' })],
+      OWN,
+      ['สุวิจักขณ์ ปิ่นรัมย์'],
+    );
+    expect(r!.isTransfer).toBeFalsy();
+  });
+
+  it('จับชื่อตัวเองได้แม้ยังไม่ตั้งค่าบัญชี (own=[]) ขอแค่มี selfNames', () => {
+    const [r] = tagOwnTransfers(
+      [txn({ source: 'slip', account: undefined, direction: 'in', counterparty: 'นาย สุวิจักขณ์ ปิ่นรัมย์', category: 'income' })],
+      [],
+      ['สุวิจักขณ์ ปิ่นรัมย์'],
+    );
+    expect(r!.isTransfer).toBe(true);
   });
 });

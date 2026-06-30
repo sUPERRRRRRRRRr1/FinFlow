@@ -30,16 +30,22 @@ export interface TaxOverviewResponse {
   annualized: boolean;
 }
 
-/** บัญชี/กระเป๋าที่ระบบตรวจพบในข้อมูล (สำหรับให้ผู้ใช้ตั้งชื่อ) */
+/** บัญชี/กระเป๋าที่ระบบตรวจพบในข้อมูล (สำหรับให้ผู้ใช้ตั้งชื่อ) — แยกจำนวนรายการจริง/เดโม */
 export interface DetectedAccount {
   id: string;
   source: string;
   count: number;
+  realCount: number;
+  demoCount: number;
+  /** เดโมล้วน (มีแต่รายการตัวอย่าง ไม่มีข้อมูลจริง) */
+  demo: boolean;
 }
 
 export interface AccountsResponse {
-  accounts: AccountConfig[];
+  accounts: (AccountConfig & { demo?: boolean })[];
   detected: DetectedAccount[];
+  /** ชื่อเจ้าของบัญชี (ผู้ใช้กรอกเอง) — ใช้จับโอนเข้าบัญชีตัวเอง ไม่ให้นับเป็นรายจ่าย */
+  selfNames?: string[];
 }
 
 export interface MonthPoint {
@@ -49,11 +55,14 @@ export interface MonthPoint {
   expense: number;
   savings: number;
   net: number;
+  /** ประมาณการเงินเข้า/ออกที่ไม่มีสลิป (จากกระทบยอดคงเหลือ) — yearly อาจไม่มี */
+  inferredIncome?: number;
+  inferredExpense?: number;
 }
 
 export interface Overview {
-  totals: { income: number; expense: number; savings: number; net: number; savingsRate: number; totalBalance: number };
-  bySource: { source: string; label: string; income: number; expense: number; net: number; count: number; balance: number | null }[];
+  totals: { income: number; expense: number; savings: number; net: number; savingsRate: number; totalBalance: number; savingsBalance: number; savingsBalanceProjected: number; savingsPending: number; dailyBalance: number; dailyPending: number; dailyBalanceDate: string | null; dailyBalanceTime: string | null; savingsNetFlow: number; savingsNetFlowPerMonth: number; inferredIncome: number; inferredExpense: number; inferredCount: number };
+  bySource: { source: string; label: string; income: number; expense: number; net: number; count: number; balance: number | null; projected: number | null; pending: number }[];
   byCategory: { category: string; label: string; color: string; icon: string; amount: number; pct: number }[];
   monthly: MonthPoint[];
   health: HealthScore;

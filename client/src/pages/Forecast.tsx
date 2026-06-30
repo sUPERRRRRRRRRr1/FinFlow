@@ -1,8 +1,134 @@
 import { useState } from 'react';
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceArea,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { useApi } from '../lib/api';
 import type { ForecastData } from '../lib/types';
 import { PageHead, Async } from '../components/ui';
-import { thb } from '../lib/format';
+import { thb, compact } from '../lib/format';
+
+const tooltipStyle = {
+  background: 'var(--surface)',
+  border: '1px solid var(--border)',
+  borderRadius: 10,
+};
+
+function ForecastChart({ data }: { data: ForecastData }) {
+  // หมวดที่มียอด > 0 ในเดือนจริงหรือคาดการณ์ (กรอง 0 ออกเพื่อ legend ที่สะอาด)
+  const cats = data.categories.filter(
+    (c) => c.history.some((h) => h.total > 0) || c.months.some((m) => m.total > 0),
+  );
+
+  const histLabels = cats[0]?.history.map((h) => h.label) ?? [];
+  const lastActual = histLabels[histLabels.length - 1];
+
+  // row ต่อเดือน: เดือนจริง (history) ต่อด้วยเดือนคาดการณ์ (months)
+  const rows = [
+    ...histLabels.map((label, hi) => {
+      const row: Record<string, number | string> = { month: label };
+      for (const c of cats) row[c.category] = c.history[hi]?.total ?? 0;
+      return row;
+    }),
+    ...data.total.map((t, ki) => {
+      const row: Record<string, number | string> = { month: t.label };
+      for (const c of cats) row[c.category] = c.months[ki]?.total ?? 0;
+      return row;
+    }),
+  ];
+
+  const firstForecast = data.total[0]?.label;
+  const lastForecast = data.total[data.total.length - 1]?.label;
+
+  return (
+    <div className="card">
+      <h3>กราฟคาดการณ์รายจ่ายรายหมวด</h3>
+      <div className="sub">
+        เส้นทึบ = ยอดจริงย้อนหลัง · พื้นที่แรเงา = ช่วงคาดการณ์ 3 เดือน · เห็นทิศทางแต่ละหมวดชัดเจน
+      </div>
+      <ResponsiveContainer width="100%" height={360}>
+        <LineChart data={rows} margin={{ left: -8, right: 8, top: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+          <XAxis dataKey="month" tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+          <YAxis tickFormatter={compact} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+          <Tooltip
+            formatter={(v: number, name) => [thb(v), name]}
+            contentStyle={tooltipStyle}
+            itemStyle={{ color: 'var(--text)' }}
+            labelStyle={{ color: 'var(--text)', fontWeight: 600 }}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          {/* แรเงาช่วงคาดการณ์ */}
+          {firstForecast && lastForecast && (
+            <ReferenceArea
+              x1={firstForecast}
+              x2={lastForecast}
+              fill="var(--muted)"
+              fillOpacity={0.07}
+            />
+          )}
+          {/* เส้นแบ่ง "ปัจจุบัน → คาดการณ์" */}
+          {lastActual && (
+            <ReferenceLine
+              x={lastActual}
+              stroke="var(--muted)"
+              strokeDasharray="4 4"
+              label={{ value: 'คาดการณ์ →', position: 'insideTopRight', fill: 'var(--muted)', fontSize: 11 }}
+            />
+          )}
+          {cats.map((c) => (
+            <Line
+              key={c.category}
+              type="monotone"
+              dataKey={c.category}
+              name={c.label}
+              stroke={c.color}
+              strokeWidth={2.5}
+              dot={{ r: 3, fill: c.color }}
+              activeDot={{ r: 5 }}
+              isAnimationActive={false}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** กราฟเส้นเล็ก (sparkline) แสดงทิศทางหมวดนั้น: จริงย้อนหลัง → คาดการณ์ */
+function Sparkline({ cat }: { cat: import('../lib/types').CategoryForecast }) {
+  const points = [
+    ...cat.history.map((h) => h.total),
+    ...cat.months.map((m) => m.total),
+  ].map((v, i) => ({ i, v }));
+  const splitAt = cat.history.length - 1; // index จุดจริงสุดท้าย
+
+  return (
+    <ResponsiveContainer width="100%" height={44}>
+      <LineChart data={points} margin={{ top: 4, bottom: 2, left: 0, right: 0 }}>
+        {splitAt >= 0 && (
+          <ReferenceArea x1={splitAt} x2={points.length - 1} fill={cat.color} fillOpacity={0.08} />
+        )}
+        <Line
+          type="monotone"
+          dataKey="v"
+          stroke={cat.color}
+          strokeWidth={2}
+          dot={false}
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
 
 function FlagBadge({ prob }: { prob: number }) {
   const pct = Math.round(prob * 100);
@@ -44,6 +170,9 @@ function CategoryCard({
           <FlagBadge prob={m.exceedProb} />
         )}
       </div>
+
+      {/* Sparkline: จริงย้อนหลัง → คาดการณ์ */}
+      <Sparkline cat={cat} />
 
       {/* Stacked bar: recurring (solid) + variable (lighter) */}
       <div style={{ height: 8, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
@@ -97,6 +226,9 @@ function ForecastContent({ data }: { data: ForecastData }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+      {/* Card 0: กราฟแท่งซ้อนภาพรวม */}
+      <ForecastChart data={data} />
 
       {/* Card 1: รายหมวด */}
       <div className="card">

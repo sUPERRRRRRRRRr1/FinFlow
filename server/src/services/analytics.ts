@@ -20,6 +20,8 @@ import {
   isRealIncome,
   linearRegression,
   netSavings,
+  projectBalances,
+  reconcileBalances,
   round,
   thaiDayLabel,
   thaiMonthLabel,
@@ -50,6 +52,19 @@ function walletLabelMap(txns: Transaction[]): Record<string, string> {
   return map;
 }
 
+/** รวม "ประมาณการเงินเข้า/ออก (จากยอดคงเหลือ ไม่มีสลิป)" ต่อเดือน — คีย์เดือน 'YYYY-MM' */
+function inferredByMonth(external: { direction: 'in' | 'out'; amount: number; beforeDate: string }[]) {
+  const m = new Map<string, { in: number; out: number }>();
+  for (const f of external) {
+    const k = f.beforeDate.slice(0, 7);
+    const e = m.get(k) ?? { in: 0, out: 0 };
+    if (f.direction === 'in') e.in += f.amount;
+    else e.out += f.amount;
+    m.set(k, e);
+  }
+  return m;
+}
+
 export function overview(txns: Transaction[], ingestStats?: unknown) {
   const income = txns.filter(isRealIncome).reduce((a, t) => a + t.amount, 0);
   const consumption = txns.filter(isConsumption).reduce((a, t) => a + t.amount, 0);
@@ -71,6 +86,8 @@ export function overview(txns: Transaction[], ingestStats?: unknown) {
     sourceMap.set(key, s);
     if (t.balanceAfter != null) balanceMap.set(key, t.balanceAfter);
   }
+  // ยอดเรียลไทม์: ต่อยอดจากการโอนข้ามบัญชี (เช่น "โอนไป X1800" จากบัญชีหลัก = เงินเข้าออมทันที)
+  const proj = projectBalances(txns);
   const bySource = [...sourceMap.entries()].map(([source, v]) => ({
     source,
     label: walletLabels[source] ?? SOURCE_LABEL[source] ?? source,
@@ -79,9 +96,50 @@ export function overview(txns: Transaction[], ingestStats?: unknown) {
     net: round(v.income - v.expense),
     count: v.count,
     balance: balanceMap.has(source) ? round(balanceMap.get(source)!) : null,
+    // ยอดประมาณการเรียลไทม์ + ส่วนที่โอนข้ามบัญชีแล้วยังไม่ขึ้น statement ฝั่งนี้
+    projected: proj.has(source) ? proj.get(source)!.projected : balanceMap.has(source) ? round(balanceMap.get(source)!) : null,
+    pending: proj.get(source)?.pendingNet ?? 0,
   }));
   // ยอดเงินรวมทุกบัญชีที่รู้ยอดคงเหลือ (เงินจริงที่มีอยู่ตอนนี้)
   const totalBalance = round([...balanceMap.values()].reduce((a, b) => a + b, 0));
+  // เงินเก็บ = ยอดคงเหลือล่าสุดของบัญชีชนิด "ออม" (เพราะโอนเข้าออมถูกตีเป็น "ย้ายกระเป๋า" ไม่ใช่หมวดออม)
+  const savingsAccountIds = new Set(getAccounts().filter((a) => a.kind === 'savings').map((a) => a.id));
+  const savingsBalance = round(
+    [...balanceMap.entries()].filter(([k]) => savingsAccountIds.has(k)).reduce((a, [, b]) => a + b, 0),
+  );
+  // เงินเก็บแบบ "เรียลไทม์" = ยอดจริงล่าสุด + โอนข้ามบัญชีเข้า/ออกออมที่ยังไม่ขึ้น statement ฝั่งออม
+  const savingsBalanceProjected = round(
+    [...savingsAccountIds].reduce((a, id) => a + (proj.get(id)?.projected ?? balanceMap.get(id) ?? 0), 0),
+  );
+  const savingsPending = round(savingsBalanceProjected - savingsBalance);
+  // เงินคงเหลือบัญชีใช้จ่ายประจำวัน (kind 'daily') แบบเรียลไทม์
+  const dailyAccountIds = new Set(getAccounts().filter((a) => a.kind === 'daily').map((a) => a.id));
+  const dailyBalance = round(
+    [...dailyAccountIds].reduce((a, id) => a + (proj.get(id)?.projected ?? balanceMap.get(id) ?? 0), 0),
+  );
+  const dailyPending = round(
+    [...dailyAccountIds].reduce((a, id) => a + (proj.get(id)?.pendingNet ?? 0), 0),
+  );
+  // "ยอดนี้ ณ เมื่อไหร่" = วันเวลาของ anchor ล่าสุดในบรรดาบัญชีใช้จ่าย (ให้รู้ว่าข้อมูลสดแค่ไหน)
+  const dailyAnchor = [...dailyAccountIds]
+    .map((id) => proj.get(id))
+    .filter((p): p is NonNullable<typeof p> => !!p)
+    .sort((a, b) => b.anchorKey.localeCompare(a.anchorKey))[0];
+  const dailyBalanceDate = dailyAnchor?.anchorDate ?? null;
+  const dailyBalanceTime = dailyAnchor?.anchorTime ?? null;
+  // เก็บเพิ่มสุทธิ = เงินเข้า−ออก ของบัญชีออม (เปลี่ยนแปลงสุทธิของยอดออม: ฝาก/รับโอนเข้า − ถอน/จ่ายออก)
+  // + เฉลี่ยต่อเดือน = หารด้วยจำนวนเดือนที่บัญชีออมมีรายการจริง (ไม่ใช่จำนวนเดือนของช่วงที่เลือก)
+  let savingsIn = 0;
+  let savingsOut = 0;
+  const savingsMonths = new Set<string>();
+  for (const t of txns) {
+    if (!savingsAccountIds.has(walletKey(t))) continue;
+    savingsMonths.add(t.date.slice(0, 7));
+    if (t.direction === 'in') savingsIn += t.amount;
+    else savingsOut += t.amount;
+  }
+  const savingsNetFlow = round(savingsIn - savingsOut);
+  const savingsNetFlowPerMonth = savingsMonths.size ? round(savingsNetFlow / savingsMonths.size) : 0;
 
   // แยกตามหมวด
   const cat = expenseByCategory(txns);
@@ -99,7 +157,11 @@ export function overview(txns: Transaction[], ingestStats?: unknown) {
     })
     .sort((a, b) => b.amount - a.amount);
 
-  // รายเดือน
+  // กระทบยอด: เงินเข้า/ออกที่อนุมานจาก balanceAfter (ไม่มีสลิป) หักการโอนตัวเองออกแล้ว
+  const recon = reconcileBalances(txns);
+  const infMonth = inferredByMonth(recon.external);
+
+  // รายเดือน (+ ประมาณการเงินเข้า/ออกที่ไม่มีสลิป ต่อเดือน — ให้กราฟแสดงแยกแท่งได้)
   const monthly = aggregate(txns, 'month').map((b) => ({
     key: b.key,
     label: thaiMonthLabel(b.key),
@@ -107,6 +169,8 @@ export function overview(txns: Transaction[], ingestStats?: unknown) {
     expense: round(b.expense),
     savings: round(b.savings),
     net: round(netSavings(b)),
+    inferredIncome: round(infMonth.get(b.key)?.in ?? 0),
+    inferredExpense: round(infMonth.get(b.key)?.out ?? 0),
   }));
 
   const recurring = detectRecurring(txns);
@@ -124,6 +188,18 @@ export function overview(txns: Transaction[], ingestStats?: unknown) {
       net: round(income - consumption),
       savingsRate: round(income > 0 ? (income - consumption) / income : 0, 4),
       totalBalance,
+      savingsBalance,
+      savingsBalanceProjected,
+      savingsPending,
+      dailyBalance,
+      dailyPending,
+      dailyBalanceDate,
+      dailyBalanceTime,
+      savingsNetFlow,
+      savingsNetFlowPerMonth,
+      inferredIncome: recon.inferredIncome,
+      inferredExpense: recon.inferredExpense,
+      inferredCount: recon.external.length,
     },
     bySource,
     byCategory,
@@ -141,6 +217,7 @@ export function overview(txns: Transaction[], ingestStats?: unknown) {
 
 export function timeline(txns: Transaction[], granularity: Granularity = 'day') {
   const daily = dailySeriesFilled(txns).map((p) => ({ ...p, label: thaiDayLabel(p.date) }));
+  const infMonth = inferredByMonth(reconcileBalances(txns).external);
   const months = aggregate(txns, 'month');
   const monthly = months.map((b) => ({
     key: b.key,
@@ -149,6 +226,8 @@ export function timeline(txns: Transaction[], granularity: Granularity = 'day') 
     expense: round(b.expense),
     savings: round(b.savings),
     net: round(netSavings(b)),
+    inferredIncome: round(infMonth.get(b.key)?.in ?? 0),
+    inferredExpense: round(infMonth.get(b.key)?.out ?? 0),
   }));
 
   // พยากรณ์เงินออมสุทธิ 3 เดือนข้างหน้าด้วย regression

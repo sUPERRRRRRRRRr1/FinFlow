@@ -35,32 +35,72 @@ export default function Dashboard() {
           return (
           <div className="grid" style={{ gap: 18 }}>
             {/* แถวสถิติหลัก */}
-            <div className="grid cols-5">
+            <div className="grid cols-6">
               <Stat
                 label="รายรับรวม"
                 value={thb(o.totals.income)}
-                accent="var(--good)"
+                accent="#22c55e"
                 trend={monthTrend(last?.income, prev?.income, true)}
                 sub={<span className="muted">{o.count} รายการ</span>}
               />
               <Stat
                 label="รายจ่ายรวม"
                 value={thb(o.totals.expense)}
-                accent="#f97316"
+                accent="var(--alert)"
                 trend={monthTrend(last?.expense, prev?.expense, false)}
                 sub={<span className="muted">ไม่รวมการโอนระหว่างกระเป๋า</span>}
               />
               <Stat
-                label="กันเข้าออม"
-                value={<span className="down">{thb(o.totals.savings)}</span>}
-                accent="var(--brand)"
-                sub={<span className="muted">เงินที่โอนเข้าบัญชีออม (ไม่นับเป็นรายจ่าย)</span>}
+                label="เงินใช้จ่าย"
+                value={<span>{thb(o.totals.dailyBalance)}</span>}
+                accent="#0ea5e9"
+                sub={
+                  <span className="muted">
+                    บัญชีใช้จ่ายประจำวัน
+                    {o.totals.dailyBalanceDate && (
+                      <> · <b>ณ {o.totals.dailyBalanceDate.split('-').reverse().join('/')}{o.totals.dailyBalanceTime ? ` ${o.totals.dailyBalanceTime}` : ''}</b></>
+                    )}
+                    {o.totals.dailyPending !== 0 && (
+                      <>
+                        {' '}(<b className={o.totals.dailyPending >= 0 ? 'down' : 'up'}>
+                          {o.totals.dailyPending >= 0 ? '+' : '−'}{thb(Math.abs(o.totals.dailyPending))}
+                        </b> ยังไม่ขึ้น statement)
+                      </>
+                    )}
+                  </span>
+                }
               />
               <Stat
-                label="ออมสุทธิ (สะสม)"
+                label="เงินเก็บ"
+                value={<span className="down">{thb(o.totals.savingsBalanceProjected)}</span>}
+                accent="var(--brand)"
+                sub={
+                  <span className="muted">
+                    {o.totals.savingsPending !== 0 ? (
+                      <>
+                        ยอดเรียลไทม์ (รวมโอนข้ามบัญชี{' '}
+                        <b className={o.totals.savingsPending >= 0 ? 'down' : 'up'}>
+                          {o.totals.savingsPending >= 0 ? '+' : '−'}{thb(Math.abs(o.totals.savingsPending))}
+                        </b>{' '}
+                        ที่ยังไม่ขึ้น statement) · จาก statement {thb(o.totals.savingsBalance)}
+                      </>
+                    ) : (
+                      <>
+                        ยอดในบัญชีออม · เก็บเพิ่ม{' '}
+                        <b className={o.totals.savingsNetFlowPerMonth >= 0 ? 'down' : 'up'}>
+                          {o.totals.savingsNetFlowPerMonth >= 0 ? '+' : ''}{thb(o.totals.savingsNetFlowPerMonth)}/เดือน
+                        </b>{' '}
+                        (รวม {o.totals.savingsNetFlow >= 0 ? '+' : ''}{thb(o.totals.savingsNetFlow)})
+                      </>
+                    )}
+                  </span>
+                }
+              />
+              <Stat
+                label="รายรับ−รายจ่าย"
                 value={<span className={o.totals.net >= 0 ? 'down' : 'up'}>{thb(o.totals.net)}</span>}
                 accent="var(--info)"
-                sub={<span className="muted">รายรับ−รายจ่ายสะสม · ไม่ใช่ยอดในบัญชี (ดูยอดจริงด้านล่าง)</span>}
+                sub={<span className="muted">กระแสเงินสุทธิช่วงนี้ (รับ−จ่าย) · ไม่ใช่ยอดเงินในบัญชี</span>}
               />
               <Stat
                 label="อัตราการออม"
@@ -112,8 +152,10 @@ export default function Dashboard() {
                       contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}
                     />
                     <Legend />
-                    <Bar dataKey="income" name="รายรับ" fill="#16a34a" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="expense" name="รายจ่าย" fill="#f97316" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="income" name="รายรับ" stackId="inc" fill="#22c55e" />
+                    <Bar dataKey="inferredIncome" name="ประมาณการรายรับ" stackId="inc" fill="#86efac" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="expense" name="รายจ่าย" stackId="exp" fill="#ef4444" />
+                    <Bar dataKey="inferredExpense" name="ประมาณการรายจ่าย" stackId="exp" fill="#fca5a5" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -124,7 +166,7 @@ export default function Dashboard() {
                 {o.totals.totalBalance > 0 && (
                   <div className="row between" style={{ padding: '10px 0', borderBottom: '2px solid var(--border)' }}>
                     <b>💰 ยอดเงินรวมทุกบัญชี</b>
-                    <b style={{ fontSize: 17 }}>{thb(o.totals.totalBalance)}</b>
+                    <b style={{ fontSize: 17 }}>{thb(o.bySource.reduce((a, s) => a + (s.projected ?? 0), 0))}</b>
                   </div>
                 )}
                 {o.bySource.map((s) => (
@@ -135,7 +177,14 @@ export default function Dashboard() {
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       {s.balance != null ? (
-                        <div style={{ fontWeight: 700, fontSize: 15 }}>{thb(s.balance)}</div>
+                        <div style={{ fontWeight: 700, fontSize: 15 }}>
+                          {thb(s.projected ?? s.balance)}
+                          {s.pending !== 0 && (
+                            <span className="muted" style={{ fontWeight: 400, fontSize: 11 }}>
+                              {' '}({s.pending > 0 ? '+' : '−'}{thb(Math.abs(s.pending))} โอนเข้า/ออกยังไม่ขึ้น statement)
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <div className="muted" style={{ fontSize: 12 }}>ยอดคงเหลือ — n/a</div>
                       )}
@@ -147,6 +196,18 @@ export default function Dashboard() {
                     </div>
                   </div>
                 ))}
+                {(o.totals.inferredIncome > 0 || o.totals.inferredExpense > 0) && (
+                  <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: 'color-mix(in srgb, var(--brand) 8%, transparent)', fontSize: 12.5 }}>
+                    <b>💡 ประมาณการจากยอดคงเหลือ</b>
+                    <div className="muted" style={{ marginTop: 4, lineHeight: 1.7 }}>
+                      ตรวจพบเงินเคลื่อนไหวที่ไม่มีสลิป (จากยอดคงเหลือกระโดด) —{' '}
+                      <span className="down">เข้า ~{thb(o.totals.inferredIncome)}</span>
+                      <span className="muted"> · </span>
+                      <span className="up">ออก ~{thb(o.totals.inferredExpense)}</span>
+                      {' '}({o.totals.inferredCount} จุด) · หักโอนระหว่างบัญชีตัวเองแล้ว · จะตรวจสอบ/แก้ให้ตรงเมื่อได้ statement จริง
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

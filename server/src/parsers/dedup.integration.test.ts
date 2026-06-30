@@ -72,19 +72,20 @@ describe('สลิป: ทิศทาง + กันซ้ำกับ STM', (
     expect(t.direction).toBe('out');
   });
 
-  it('marker "ทิศทาง: in/out" จาก vision OCR มีผลเหนือคำใบ้อื่น', () => {
-    // โมเดลสรุปว่าเป็นเงินเข้า แม้ข้อความจะมีคำว่า "โอนเงิน"
-    const incoming = parseSlip(`ประเภท: โอนเงิน
+  it('marker "ทิศทาง: in" จาก OCR ไม่พลิกสลิปจ่ายเป็นรับเข้า (เนื้อสลิปนำ marker)', () => {
+    // โมเดล vision เดา in ผิด ทั้งที่เนื้อสลิปคือ "โอนเงิน ... ผู้รับ: สมชาย" = จ่ายออก → ต้องเป็น out
+    const wrongMarker = parseSlip(`ประเภท: โอนเงิน
 ทิศทาง: in
 ผู้รับ: สมชาย
 จำนวน: 500.00 บาท`)!;
-    expect(incoming.direction).toBe('in');
-    // โมเดลสรุปว่าเป็นเงินออก แม้ "ประเภท" จะมีคำว่า "รับเงิน"
-    const outgoing = parseSlip(`ประเภท: รับเงินเข้าบัญชี
-ทิศทาง: out
-ผู้รับ: ร้านค้า
-จำนวน: 120.00 บาท`)!;
-    expect(outgoing.direction).toBe('out');
+    expect(wrongMarker.direction).toBe('out');
+  });
+
+  it('marker=in ใช้ตัดสินเฉพาะสลิปที่ไม่มีร่องรอยการจ่ายออกเลย (กำกวมจริง)', () => {
+    const ambiguous = parseSlip(`ทิศทาง: in
+จำนวน: 500.00 บาท
+เลขที่รายการ: 0123456789`)!;
+    expect(ambiguous.direction).toBe('in');
   });
 
   it('สลิป + KBank STM รายการเดียวกัน → เหลือ 1 (STM ชนะ)', () => {

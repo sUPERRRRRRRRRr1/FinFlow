@@ -1,7 +1,16 @@
 import 'dotenv/config';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// prod = backend เสิร์ฟ client/dist พอร์ตเดียวกัน (redirect relative ได้) · dev = client อยู่ vite 5173
+const clientBuilt = existsSync(path.resolve(__dirname, '..', '..', 'client', 'dist'));
 
 export const config = {
   port: Number(process.env.PORT ?? 4000),
+  /** origin ของหน้าเว็บ client สำหรับ redirect กลับหลัง OAuth ('' = พอร์ตเดียวกันใน prod) */
+  appUrl: process.env.APP_URL?.trim() ?? (clientBuilt ? '' : 'http://localhost:5173'),
   gemini: {
     apiKey: process.env.GEMINI_API_KEY?.trim() || '',
     model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.1-flash-lite',

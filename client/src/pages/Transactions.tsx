@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ALL_CATEGORIES, CATEGORY_META, displayName, monthKey, thaiMonthLabel, walletKey } from '@finflow/shared';
+import { ALL_CATEGORIES, CATEGORY_META, displayName, monthKey, reconcileBalances, thaiMonthLabel, walletKey } from '@finflow/shared';
 import type { CategoryId, MerchantRule, Transaction } from '@finflow/shared';
 import { useApi, apiSend } from '../lib/api';
 import type { AccountsResponse } from '../lib/types';
 import { PageHead, Async } from '../components/ui';
 import { thb } from '../lib/format';
+
+// ค่าหมวดพิเศษ (ฝั่ง client เท่านั้น) สำหรับกรองดู "ประมาณการจากยอดคงเหลือ" ในตารางรายการ
+const INFERRED = '__inferred';
 
 const SOURCE_LABEL: Record<string, string> = {
   kbank: 'KBank',
@@ -80,6 +83,40 @@ export default function Transactions() {
     }
     return { income, expense };
   }, [filtered]);
+
+  // เงินเข้า/ออกที่อนุมานจากยอดคงเหลือ (ไม่มีสลิป) → แปลงเป็น "แถวปกติ" เพื่อแทรกรวมในตาราง
+  // กรองตามเดือน/กระเป๋าที่เลือก · ติดธง __inferred ไว้แยกการแสดงผล (ไม่มี dropdown หมวด/ปุ่มตั้งกฎ)
+  const inferredRows = useMemo(() => {
+    return reconcileBalances(rows)
+      .external.filter((f) => {
+        if (month !== 'all' && monthKey(f.beforeDate) !== month) return false;
+        if (source !== 'all' && (f.account ?? f.source) !== source) return false;
+        return true;
+      })
+      .map(
+        (f) =>
+          ({
+            id: f.id,
+            date: f.beforeDate,
+            amount: f.amount,
+            direction: f.direction,
+            counterparty: f.direction === 'in' ? 'เงินเข้าที่ไม่มีสลิป' : 'เงินออกที่ไม่มีสลิป',
+            source: f.source as Transaction['source'],
+            account: f.account,
+            category: 'other' as CategoryId,
+            __inferred: true,
+            afterDate: f.afterDate,
+            beforeDate: f.beforeDate,
+          }) as Transaction & { __inferred: true; afterDate: string; beforeDate: string },
+      );
+  }, [rows, month, source]);
+
+  // รวมแถวประมาณการเข้ากับรายการจริง เรียงตามวันที่ — เลือกหมวด "ประมาณการ" เพื่อดูเฉพาะพวกนี้
+  const display = useMemo(() => {
+    const real = category === INFERRED ? [] : filtered;
+    const inf = !q && (category === 'all' || category === INFERRED) ? inferredRows : [];
+    return [...real, ...inf].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  }, [filtered, inferredRows, category, q]);
 
   const changeCategory = async (id: string, cat: CategoryId) => {
     setRows((rs) => rs.map((t) => (t.id === id ? { ...t, category: cat } : t)));
@@ -157,17 +194,18 @@ export default function Transactions() {
                 <select value={category} onChange={(e) => setCategory(e.target.value)} style={inputStyle()}>
                   <option value="all">ทุกหมวด</option>
                   {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_META[c].label}</option>)}
+                  <option value={INFERRED}>💡 ประมาณการ (ยอดคงเหลือ)</option>
                 </select>
                 <div className="spacer" />
                 <div className="row" style={{ gap: 14, fontSize: 13 }}>
-                  <span className="muted">{filtered.length} รายการ</span>
+                  <span className="muted">{display.length} รายการ</span>
                   <span className="down">เข้า {thb(sums.income)}</span>
                   <span className="up">ออก {thb(sums.expense)}</span>
                 </div>
               </div>
             </div>
 
-            {/* ตาราง */}
+            {/* ตาราง (รวมรายการจริง + ประมาณการจากยอดคงเหลือ เรียงตามวันที่) */}
             <div className="card" style={{ overflowX: 'auto', padding: 0 }}>
               <table className="tbl" style={{ minWidth: 820 }}>
                 <thead>
@@ -181,48 +219,76 @@ export default function Transactions() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.slice(0, 500).map((t) => (
-                    <tr key={t.id}>
-                      <td style={{ paddingLeft: 18, whiteSpace: 'nowrap' }}>
-                        {t.date}
-                        {t.time && <div className="muted" style={{ fontSize: 11 }}>{t.time}</div>}
-                      </td>
-                      <td>
-                        <div>
-                          {displayName(t)}
-                          {t.isTransfer && <span className="badge" style={{ marginLeft: 6, fontSize: 10 }}>โอนระหว่างกระเป๋า</span>}
-                        </div>
-                        <div className="muted mono" style={{ fontSize: 11 }}>
-                          {t.alias && t.alias !== t.counterparty ? `${t.counterparty} · ` : ''}
-                          {t.accountRef ?? '—'}
-                        </div>
-                      </td>
-                      <td>
-                        <select
-                          value={t.category}
-                          onChange={(e) => changeCategory(t.id, e.target.value as CategoryId)}
-                          style={{ ...inputStyle(), padding: '5px 8px', fontSize: 12.5 }}
-                        >
-                          {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_META[c].icon} {CATEGORY_META[c].label}</option>)}
-                        </select>
-                      </td>
-                      <td className="muted">{walletLabel(t)}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                        <span className={t.direction === 'in' ? 'down' : 'up'}>
-                          {t.direction === 'in' ? '+' : '−'}{thb(t.amount)}
-                        </span>
-                      </td>
-                      <td style={{ paddingRight: 18 }}>
-                        {!t.isTransfer && (
-                          <button className="btn" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setRuleFor(t)}>ตั้งกฎ</button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {display.slice(0, 500).map((t) =>
+                    (t as { __inferred?: boolean }).__inferred ? (
+                      // แถวประมาณการจากยอดคงเหลือ (ไม่มีสลิป) — ไม่มี dropdown หมวด/ปุ่มตั้งกฎ
+                      <tr key={t.id} style={{ background: 'color-mix(in srgb, var(--brand) 5%, transparent)' }}>
+                        <td style={{ paddingLeft: 18, whiteSpace: 'nowrap' }}>
+                          {t.date}
+                          <div className="muted" style={{ fontSize: 10.5 }}>
+                            ช่วง {(t as { afterDate: string }).afterDate} – {(t as { beforeDate: string }).beforeDate}
+                          </div>
+                        </td>
+                        <td>
+                          <div>
+                            {t.counterparty}
+                            <span className="badge" style={{ marginLeft: 6, fontSize: 10 }}>ประมาณการ</span>
+                          </div>
+                          <div className="muted" style={{ fontSize: 11 }}>อนุมานจากยอดคงเหลือ · หักโอนตัวเองแล้ว</div>
+                        </td>
+                        <td className="muted" style={{ fontSize: 12.5 }}>💡 ประมาณการ</td>
+                        <td className="muted">{walletLabel(t as Transaction)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                          <span className={t.direction === 'in' ? 'down' : 'up'}>
+                            {t.direction === 'in' ? '+' : '−'}{thb(t.amount)}
+                          </span>
+                        </td>
+                        <td style={{ paddingRight: 18 }} />
+                      </tr>
+                    ) : (
+                      <tr key={t.id}>
+                        <td style={{ paddingLeft: 18, whiteSpace: 'nowrap' }}>
+                          {t.date}
+                          {t.time && <div className="muted" style={{ fontSize: 11 }}>{t.time}</div>}
+                        </td>
+                        <td>
+                          <div>
+                            {displayName(t as Transaction)}
+                            {t.isTransfer && <span className="badge" style={{ marginLeft: 6, fontSize: 10 }}>โอนระหว่างกระเป๋า</span>}
+                          </div>
+                          <div className="muted mono" style={{ fontSize: 11 }}>
+                            {t.alias && t.alias !== t.counterparty ? `${t.counterparty} · ` : ''}
+                            {t.accountRef ?? '—'}
+                          </div>
+                        </td>
+                        <td>
+                          <select
+                            value={t.category}
+                            onChange={(e) => changeCategory(t.id, e.target.value as CategoryId)}
+                            style={{ ...inputStyle(), padding: '5px 8px', fontSize: 12.5 }}
+                          >
+                            {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_META[c].icon} {CATEGORY_META[c].label}</option>)}
+                          </select>
+                        </td>
+                        <td className="muted">{walletLabel(t as Transaction)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                          <span className={t.isTransfer ? 'flat' : t.direction === 'in' ? 'down' : 'up'}>
+                            {/* โอนระหว่างกระเป๋าตัวเอง = เป็นกลาง ไม่ใช่รายจ่าย → สีกลาง (เทา) + "↔" ไม่ใช่แดง/เขียว */}
+                            {t.isTransfer ? '↔ ' : t.direction === 'in' ? '+' : '−'}{thb(t.amount)}
+                          </span>
+                        </td>
+                        <td style={{ paddingRight: 18 }}>
+                          {!t.isTransfer && (
+                            <button className="btn" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setRuleFor(t as Transaction)}>ตั้งกฎ</button>
+                          )}
+                        </td>
+                      </tr>
+                    ),
+                  )}
                 </tbody>
               </table>
-              {filtered.length === 0 && <div className="center muted" style={{ padding: 30 }}>ไม่พบรายการตามเงื่อนไข</div>}
-              {filtered.length > 500 && <div className="center muted" style={{ padding: 12, fontSize: 12 }}>แสดง 500 รายการแรก — ใช้ตัวกรองเพื่อดูเฉพาะเจาะจง</div>}
+              {display.length === 0 && <div className="center muted" style={{ padding: 30 }}>ไม่พบรายการตามเงื่อนไข</div>}
+              {display.length > 500 && <div className="center muted" style={{ padding: 12, fontSize: 12 }}>แสดง 500 รายการแรก — ใช้ตัวกรองเพื่อดูเฉพาะเจาะจง</div>}
             </div>
           </div>
         )}

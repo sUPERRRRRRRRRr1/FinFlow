@@ -1,6 +1,6 @@
 import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Transaction } from '@finflow/shared';
@@ -32,6 +32,17 @@ function oauthClient(): OAuth2Client {
 
 export function isConnected(): boolean {
   return existsSync(TOKEN_PATH);
+}
+
+/** ลบ token ที่บันทึกไว้ (เช่นเมื่อ refresh token หมดอายุ) ให้ UI กลับไปสถานะ "ยังไม่เชื่อม" */
+export function disconnect(): void {
+  if (existsSync(TOKEN_PATH)) rmSync(TOKEN_PATH);
+}
+
+/** refresh token หมดอายุ/ถูกเพิกถอน → Google ตอบ invalid_grant */
+function isInvalidGrant(err: unknown): boolean {
+  const e = err as { response?: { data?: { error?: string } }; message?: string };
+  return e?.response?.data?.error === 'invalid_grant' || /invalid_grant/.test(String(e?.message ?? ''));
 }
 
 export function getAuthUrl(): string {
@@ -157,14 +168,37 @@ async function extractPdfWithPasswords(buf: Buffer, passwords: string[]): Promis
  * ความเป็นส่วนตัว: กรองเฉพาะผู้ส่ง allow-list หรือป้ายที่ผู้ใช้กำหนด ไม่แตะเมลอื่น
  * หมายเหตุ: statement PDF ใส่รหัส → ปลดล็อคฝั่ง client แล้วอัปโหลดข้อความแทน
  */
+export interface GmailFetchResult {
+  transactions: Transaction[];
+  /** จำนวน statement PDF ที่ใส่รหัส แต่ปลดล็อก/อ่านไม่ได้ (ไม่มีรหัสที่ใช่) — ใช้เตือนผู้ใช้ให้บันทึกรหัส */
+  lockedPdfs: number;
+}
+
 export async function fetchBankTransactions(
   maxResults = 250,
   windowExpr = 'newer_than:13m',
   pdfPasswords: string[] = [],
-): Promise<Transaction[]> {
+): Promise<GmailFetchResult> {
   if (!flags.gmailConfigured) throw new Error('ยังไม่ได้ตั้งค่า Gmail OAuth (ดู .env.example)');
   if (!isConnected()) throw new Error('ยังไม่ได้เชื่อมต่อ Gmail (เรียก /api/auth/google ก่อน)');
 
+  try {
+    return await fetchBankTransactionsInner(maxResults, windowExpr, pdfPasswords);
+  } catch (err) {
+    if (isInvalidGrant(err)) {
+      // refresh token หมดอายุ (OAuth app โหมด Testing = หมดใน 7 วัน) → ล้าง token ให้ UI ขอเชื่อมใหม่
+      disconnect();
+      throw new Error('การเชื่อมต่อ Gmail หมดอายุ — กรุณากดเชื่อมต่อ Gmail ใหม่อีกครั้ง (refresh token expired)');
+    }
+    throw err;
+  }
+}
+
+async function fetchBankTransactionsInner(
+  maxResults: number,
+  windowExpr: string,
+  pdfPasswords: string[],
+): Promise<GmailFetchResult> {
   const gmail = google.gmail({ version: 'v1', auth: authedClient() });
   const fromQuery = BANK_SENDERS.map((s) => `from:${s}`).join(' OR ');
   const scope = config.gmail.slipLabel
@@ -177,6 +211,7 @@ export async function fetchBankTransactions(
   });
 
   const out: Transaction[] = [];
+  let lockedPdfs = 0; // STM PDF ที่ปลดล็อกไม่ได้ (รหัสไม่ถูก/ยังไม่ได้บันทึกรหัสไว้)
   for (const msg of list.data.messages ?? []) {
     if (!msg.id) continue;
     const full = await gmail.users.messages.get({ userId: 'me', id: msg.id, format: 'full' });
@@ -210,11 +245,14 @@ export async function fetchBankTransactions(
     const pdfs = await statementPdfs(gmail, msg.id, payload);
     for (const buf of pdfs) {
       const pdfText = await extractPdfWithPasswords(buf, pdfPasswords);
-      if (!pdfText) continue;
+      if (!pdfText) {
+        lockedPdfs++; // เจอ statement ใส่รหัสแต่ปลดล็อกไม่ได้ → นับไว้เตือนผู้ใช้ให้บันทึกรหัส
+        continue;
+      }
       // ให้ registry เลือก parser (KBank STM → parseSavingsStatement, TrueMoney STM/อื่นๆ ตามผู้ส่ง/เนื้อหา)
       // ทางเดียวกับการอัปโหลดเอง เพื่อไม่ให้ผลลัพธ์ต่างกันระหว่าง 2 ช่องทาง
       out.push(...parseStatement(pdfText, { sender, filename: subject }).transactions);
     }
   }
-  return out;
+  return { transactions: out, lockedPdfs };
 }

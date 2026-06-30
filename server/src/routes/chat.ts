@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { getAllTransactions, getScoreProfile, getTaxProfile } from '../db.js';
+import { getScoreProfile, getTaxProfile } from '../db.js';
+import { loadTransactions } from './_helpers.js';
 import { buildChatContext } from '../services/chat.js';
 import { buildSnapshot } from '../services/snapshot.js';
 import { answerQuestion } from '../services/gemini.js';
@@ -11,6 +12,8 @@ export const chatRouter = Router();
  * POST /api/chat { question, history? }
  * โค้ดสร้าง fact-sheet ครบทุกด้าน (ตัวเลขคำนวณเอง) + โฟกัสคำถาม แล้วให้ LLM เลือก/เรียบเรียง
  * ถ้าไม่มี LLM key จะ fallback เป็น rule-based (เลือก section ที่เกี่ยวข้อง)
+ * เคารพ scope จริง/เดโม + ช่วงเวลา ผ่าน loadTransactions(req) เหมือนทุก endpoint อื่น
+ * (client แนบ ?data=&from=&to= มากับ request)
  */
 chatRouter.post('/', async (req, res) => {
   const schema = z.object({
@@ -23,7 +26,7 @@ chatRouter.post('/', async (req, res) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'กรุณาพิมพ์คำถาม' });
 
-  const txns = getAllTransactions();
+  const txns = loadTransactions(req);
   const snapshot = buildSnapshot(txns, { scoreProfile: getScoreProfile(), taxProfile: getTaxProfile() });
   const { focus, sample } = buildChatContext(parsed.data.question, txns);
   const { text, source } = await answerQuestion(

@@ -119,6 +119,15 @@ export function buildSankey(txns: Transaction[], walletLabels: Record<string, st
     if (!g.from || !g.to || g.from === g.to) continue;
     add(pairFlow, `${g.from}${SEP}${g.to}`, g.amount);
   }
+  // โอนเข้าบัญชีตัวเองที่ตรวจจากเลขบัญชี (รู้ปลายทางแต่ยังไม่มีคู่ — statement มาฝั่งเดียว)
+  // วาดเป็นกระเป๋า→กระเป๋าด้วย เพื่อไม่ให้ยอดออกหายจากกราฟ (กระเป๋าต้นทางสมดุล)
+  for (const t of txns) {
+    if (!t.isTransfer || t.transferGroup || !t.transferTo) continue;
+    const self = walletKey(t);
+    if (self === t.transferTo) continue;
+    if (t.direction === 'out') add(pairFlow, `${self}${SEP}${t.transferTo}`, t.amount);
+    else add(pairFlow, `${t.transferTo}${SEP}${self}`, t.amount);
+  }
   const handled = new Set<string>();
   const netEdges: { from: string; to: string; value: number }[] = [];
   for (const [k, v] of pairFlow) {
@@ -162,7 +171,7 @@ export function buildSankey(txns: Transaction[], walletLabels: Record<string, st
   for (const [key, amount] of incomeByNameWallet) {
     if (amount <= 0) continue;
     const [name, wallet] = key.split(SEP);
-    addNode({ id: `income:${name}`, label: name!, type: 'income', color: '#16a34a' });
+    addNode({ id: `income:${name}`, label: name!, type: 'income', color: '#22c55e' });
     addWallet(wallet!);
     links.push({ source: `income:${name}`, target: `wallet:${wallet}`, value: round(amount) });
   }

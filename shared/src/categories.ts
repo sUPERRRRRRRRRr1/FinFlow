@@ -14,7 +14,7 @@ export interface CategoryMeta {
 
 /** ข้อมูลแสดงผลของแต่ละหมวด */
 export const CATEGORY_META: Record<CategoryId, CategoryMeta> = {
-  income: { id: 'income', label: 'รายรับ/เงินเดือน', icon: '💰', color: '#16a34a', isIncome: true },
+  income: { id: 'income', label: 'รายรับ/เงินเดือน', icon: '💰', color: '#22c55e', isIncome: true },
   food: { id: 'food', label: 'อาหาร/เครื่องดื่ม', icon: '🍜', color: '#f97316' },
   shopping: { id: 'shopping', label: 'ช้อปปิ้ง', icon: '🛍️', color: '#ec4899' },
   transport: { id: 'transport', label: 'เดินทาง/ขนส่ง', icon: '🚌', color: '#0ea5e9' },
@@ -23,6 +23,7 @@ export const CATEGORY_META: Record<CategoryId, CategoryMeta> = {
   health: { id: 'health', label: 'สุขภาพ', icon: '🏥', color: '#ef4444' },
   education: { id: 'education', label: 'การศึกษา', icon: '📚', color: '#14b8a6' },
   transfer: { id: 'transfer', label: 'โอน/ถอนเงินสด', icon: '🔁', color: '#94a3b8' },
+  own_transfer: { id: 'own_transfer', label: 'โอนเข้าบัญชีตัวเอง', icon: '🔄', color: '#06b6d4' },
   savings: { id: 'savings', label: 'ออม/ลงทุน', icon: '🏦', color: '#22c55e' },
   other: { id: 'other', label: 'อื่นๆ', icon: '📦', color: '#64748b' },
 };

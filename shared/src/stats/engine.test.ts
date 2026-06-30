@@ -64,7 +64,7 @@ describe('inter-wallet transfer matching', () => {
     const { matches, tagged } = matchTransfers(txns);
     expect(matches).toHaveLength(1);
     expect(tagged.every((t) => t.isTransfer)).toBe(true);
-    expect(tagged.every((t) => t.category === 'transfer')).toBe(true);
+    expect(tagged.every((t) => t.category === 'own_transfer')).toBe(true);
   });
 
   it('does not pair transfers within the same wallet', () => {
